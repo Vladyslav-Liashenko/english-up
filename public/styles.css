@@ -152,6 +152,7 @@ pre { margin: 0; white-space: pre-wrap; font: inherit; }
 .composer textarea { border-radius: 20px; padding: 9px 14px; max-height: 120px; }
 .mic, .send { width: 42px; height: 42px; flex: none; border-radius: 50%; background: var(--bg2); font-size: 18px; }
 .send { background: var(--accent); color: var(--accent-t); }
+.mic.wait { opacity: .6; }
 .mic.rec { background: var(--bad); color: #fff; animation: pulse 1.2s infinite; }
 @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(229,72,77,.5); } 100% { box-shadow: 0 0 0 14px rgba(229,72,77,0); } }
 .donate-cta { display: flex; align-items: center; gap: 12px; margin-top: 12px; position: relative; background: linear-gradient(135deg, rgba(253,224,71,.22), rgba(245,165,36,.18)); }
