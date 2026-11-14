@@ -951,8 +951,11 @@
   };
   function loadImages() {
     root.querySelectorAll('img[data-word]').forEach(function (img) {
-      Img.get(img.getAttribute('data-word')).then(function (v) {
-        if (!v || !img.isConnected) return;
+      var wd = img.getAttribute('data-word');
+      Img.get(wd).then(function (v) {
+        if (!v) return;
+        if (!img.isConnected) img = Array.prototype.find.call(root.querySelectorAll('img[data-word]'), function (x) { return x.getAttribute('data-word') === wd; });
+        if (!img || img.getAttribute('src')) return;
         img.onload = function () { img.classList.add('ok'); };
         img.onerror = function () { img.remove(); };
         img.src = v.u;
