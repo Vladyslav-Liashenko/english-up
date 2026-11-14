@@ -165,7 +165,7 @@ Rules:
 Return ONLY JSON: {"reply":"...","tr":"...","better":"...","correction":"..."}`;
       let messages = cleanHistory(body.history);
       if (!messages.length) messages = [{ role: 'user', content: '(Start the conversation. Greet me and ask the first question.)' }];
-      return json(parseJSON(await llm(env, system, messages, 600)));
+      return json(parseJSON(await llm(env, system, messages, 350)));
     }
     case 'grammar_qa': {
       const system = `You are an experienced English grammar teacher. Answer the student's question in ${lang}. Student level: ${level}.
@@ -222,7 +222,11 @@ async function handleSTT(request, env) {
   if (!env.AI) throw httpError('Workers AI binding "AI" is not configured', 500);
   const buf = await request.arrayBuffer();
   if (buf.byteLength > 8 * 1024 * 1024) throw httpError('Audio too long', 413);
-  const res = await env.AI.run('@cf/openai/whisper', { audio: [...new Uint8Array(buf)] });
+  const audio = [...new Uint8Array(buf)];
+  let res = null;
+  // спершу швидка англійська модель, якщо вона не впоралась — повна Whisper
+  try { res = await env.AI.run('@cf/openai/whisper-tiny-en', { audio }); } catch (e) { console.error('whisper-tiny-en', e.message); }
+  if (!res || !res.text || !res.text.trim()) res = await env.AI.run('@cf/openai/whisper', { audio });
   return json({ text: (res && res.text) || '' });
 }
 
