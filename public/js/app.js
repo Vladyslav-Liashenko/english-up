@@ -112,7 +112,11 @@
   }
   function lessonKey(level, n) { return level + '_' + n; }
   function lessonTense(level, n) { var lv = window.LEVELS.find(function (x) { return x.id === level; }); return lv.lessons[n - 1]; }
-  function lessonTitle(level, n) { var id = lessonTense(level, n); return id === 'mixed' ? t('mixed') : Content.tense(id).name; }
+  function lessonTitle(level, n) {
+    var id = lessonTense(level, n), lv = window.LEVELS.find(function (x) { return x.id === level; });
+    var k = lv.lessons.slice(0, n).filter(function (x) { return x === id; }).length; // який раз ця тема на рівні
+    return (id === 'mixed' ? t('mixed') : Content.tense(id).name) + (k > 1 ? ' · ' + k : '');
+  }
   function nextLesson() {
     var p = State.p, lv = window.LEVELS.find(function (x) { return x.id === p.cefr; });
     for (var i = 1; i <= lv.lessons.length; i++) if (!(p.lessons[lessonKey(p.cefr, i)] || {}).done) return { level: p.cefr, n: i };
