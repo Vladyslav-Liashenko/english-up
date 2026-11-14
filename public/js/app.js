@@ -111,6 +111,7 @@
     h += '<h3>' + t('quick') + '</h3><div class="grid2">' +
       tile('tab', 'tenses', '⏳', t('tenses_sheet')) + tile('dictsub', 'verbs', '⚡', t('irregular')) +
       tile('dictsub', 'cards', '🃏', t('cards') + ' (' + State.dict.items.length + ')') + tile('open', 'qa', '❓', t('ask')) + '</div>' +
+      '<button class="card invite-cta" data-act="open" data-v="invite"><span>👥</span><div><b>' + t('ref_title') + '</b><div class="muted small">' + t('ref_cta') + '</div></div><span class="arrow">›</span></button>' +
       '<button class="card donate-cta" data-act="open" data-v="donate"><span>⭐</span><div><b>' + t('donate') + '</b><div class="muted small">' + t('donate_sub') + '</div></div><span class="arrow">›</span></button>';
     return h;
   };
@@ -246,6 +247,7 @@
     }).join('') + '</div>';
     if (p.essays.length) h += '<h3>' + t('essays_hist') + '</h3><div class="card">' + p.essays.slice(0, 10).map(function (e) { return '<div class="lrow static"><span class="ln">' + e.score + '</span><span class="lt">' + esc(e.topic) + '</span><span class="muted small">' + e.date + '</span></div>'; }).join('') + '</div>';
     if (E.isAdmin) h += '<button class="btn big admin-btn" data-act="open" data-v="admin">📊 ' + t('adm_title') + '</button>';
+    h += '<button class="btn big invite-btn" data-act="open" data-v="invite">👥 ' + t('ref_title') + '</button>';
     h += '<button class="btn big" data-act="open" data-v="donate">⭐ ' + t('donate') + '</button>';
     h += '<button class="btn sec big" data-act="open" data-v="settings">⚙️ ' + t('settings') + '</button>';
     return h;
@@ -255,11 +257,42 @@
   function ping(open) {
     if (!E.inTg) return;
     var p = State.p;
-    fetch((window.API_BASE || '') + '/api/ping', { method: 'POST', headers: Api.headers(), body: JSON.stringify({ open: open, lang: p.lang, cefr: p.cefr, track: p.track, xp: p.xp, lessons: p.stats.lessons, words: p.stats.words, streak: p.streak }) })
+    fetch((window.API_BASE || '') + '/api/ping', { method: 'POST', headers: Api.headers(), body: JSON.stringify({ open: open, ref: open ? refParam() : '', lang: p.lang, cefr: p.cefr, track: p.track, xp: p.xp, lessons: p.stats.lessons, words: p.stats.words, streak: p.streak }) })
       .then(function (r) { return r.json(); })
-      .then(function (j) { if (j && j.admin && !E.isAdmin) { E.isAdmin = true; var tp = top(); if (tp && tp.type === 'profile') rerender(); } })
+      .then(function (j) {
+        if (!j) return;
+        if (j.welcome) { Game.addXP(50); UI.toast('🎁 ' + t('ref_welcome'), 3000); }
+        if (j.refReward > 0) { State.p.refs = (State.p.refs || 0) + j.refReward; Game.addXP(100 * j.refReward); UI.toast('👥 ' + t('ref_reward', { n: j.refReward }), 3000); Game.checkAch(); State.save(); }
+        if (j.admin && !E.isAdmin) { E.isAdmin = true; var tp = top(); if (tp && tp.type === 'profile') rerender(); }
+      })
       .catch(function () { });
   }
+  function refParam() {
+    var sp = (E.inTg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) || '';
+    return /^ref_\d+$/.test(sp) ? sp : '';
+  }
+  // ----- Запроси друзів -----
+  async function loadRef(pg) {
+    try {
+      var r = await fetch((window.API_BASE || '') + '/api/ref', { method: 'POST', headers: Api.headers(), body: '{}' });
+      var j = await r.json();
+      if (!r.ok) throw new Error(j.error || r.status);
+      pg.data = j;
+    } catch (e) { pg.err = e.message; }
+    if (top() === pg) rerender();
+  }
+  Pages.invite = function (pg) {
+    var h = head(t('ref_title'), t('ref_sub'));
+    h += '<div class="card center"><div class="ti big">👥</div><p>' + t('ref_text', { a: 100, b: 50 }) + '</p></div>';
+    if (pg.err) return h + '<div class="fb bad">' + esc(pg.err) + '</div>';
+    if (!pg.data) return h + spinner(t('loading'));
+    var d = pg.data;
+    h += '<div class="stats s3">' + [[d.invited, t('ref_invited')], [d.activated, t('ref_joined')], [d.activated * d.xpInviter, 'XP']].map(function (x) { return '<div class="stat"><b>' + x[0] + '</b><small>' + x[1] + '</small></div>'; }).join('') + '</div>';
+    h += '<h3>' + t('ref_link') + '</h3><div class="reflink" data-act="ref-copy">' + esc(d.link) + '</div>';
+    h += '<div class="row2"><button class="btn sec" data-act="ref-copy">📋 ' + t('ref_copy') + '</button><button class="btn" data-act="ref-share">📤 ' + t('ref_share') + '</button></div>';
+    h += '<p class="muted small center">' + t('ref_note') + '</p>';
+    return h;
+  };
   async function loadAdmin(pg) {
     try {
       var r = await fetch((window.API_BASE || '') + '/api/admin/stats', { method: 'POST', headers: Api.headers(), body: '{}' });
@@ -296,6 +329,9 @@
     h += '<h3>🏆 ' + t('adm_top') + '</h3><div class="card">' + d.topUsers.map(function (u, i) { return '<div class="lrow static"><span class="ln">' + (i + 1) + '</span><span class="lt">' + who(u) + '<div class="muted small">' + esc(u.cefr || '') + ' · ' + u.lessons + ' ' + t('st_lessons') + ' · 🔥' + u.streak + (u.donated ? ' · ⭐' + u.donated : '') + '</div></span><b>' + u.xp + '</b></div>'; }).join('') + '</div>';
     h += '<h3>🆕 ' + t('adm_newest') + '</h3><div class="card">' + d.newUsers.map(function (u) { return '<div class="lrow static"><span class="lt">' + who(u) + '</span><span class="muted small">' + esc(u.cefr || '') + ' · ' + fmtDate(u.first_seen) + '</span></div>'; }).join('') + '</div>';
     h += '<h3>🤖 ' + t('adm_usage') + '</h3><div class="card">' + (d.usage.d30.length ? d.usage.d30.map(function (x) { var td = (d.usage.today.find(function (y) { return y.kind === x.kind; }) || {}).n || 0; return '<div class="srow"><span>' + esc(x.kind) + '</span><span class="muted small">' + t('adm_today') + ': ' + td + '</span><b>' + x.n + '</b></div>'; }).join('') : '<div class="muted small">—</div>') + '</div>';
+    var rf = d.referrals || { all: {}, top: [] };
+    h += '<h3>👥 ' + t('adm_refs') + '</h3><div class="stats s3">' + m(rf.all.n, t('ref_invited')) + m(rf.all.act, t('ref_joined')) + m(tot ? Math.round((rf.all.act || 0) / tot * 100) + '%' : '0%', t('adm_ref_share')) + '</div>';
+    if (rf.top.length) h += '<div class="card">' + rf.top.map(function (u, i) { return '<div class="lrow static"><span class="ln">' + (i + 1) + '</span><span class="lt">' + who(u) + '</span><span class="muted small">' + u.act + ' / ' + u.n + '</span></div>'; }).join('') + '</div>';
     h += '<button class="btn sec big" data-act="admin-reload">↻ ' + t('adm_reload') + '</button><p class="muted small center">' + t('adm_updated') + ' ' + fmtDate(d.generated) + '</p>';
     return h;
   };
@@ -785,6 +821,7 @@
   };
   A.open = function (d) {
     if (d.v === 'admin') { var ap = { type: 'admin' }; push(ap); loadAdmin(ap); return; }
+    if (d.v === 'invite') { var ip = { type: 'invite' }; push(ip); loadRef(ip); return; }
     if (d.v === 'essay') push({ type: 'essay', step: 'topics' });
     else if (d.v === 'qa') push({ type: 'qa', msgs: [] });
     else push({ type: d.v });
@@ -890,6 +927,18 @@
     it.wi--; UI.haptic('light'); render();
   };
   A['admin-reload'] = function () { var ap = top(); ap.data = null; ap.err = null; rerender(); loadAdmin(ap); };
+  function shareText() { return t('ref_share_text'); }
+  A['ref-copy'] = function () {
+    var pg = top(), link = pg && pg.data && pg.data.link; if (!link) return;
+    var done = function () { UI.toast('📋 ' + t('ref_copied')); UI.haptic('light'); };
+    try { navigator.clipboard.writeText(link).then(done, function () { fallbackCopy(link); done(); }); } catch (e) { fallbackCopy(link); done(); }
+  };
+  function fallbackCopy(s) { var ta = document.createElement('textarea'); ta.value = s; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch (e) { } ta.remove(); }
+  A['ref-share'] = function () {
+    var pg = top(), link = pg && pg.data && pg.data.link; if (!link) return;
+    var url = 'https://t.me/share/url?url=' + encodeURIComponent(link) + '&text=' + encodeURIComponent(shareText());
+    if (E.inTg && tg.openTelegramLink) tg.openTelegramLink(url); else window.open(url, '_blank');
+  };
   A.next = nextItem;
   A.check = checkItem;
   A.pick = function (d) {
