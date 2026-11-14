@@ -213,10 +213,11 @@ window.TENSES = [
 
 // Структура курсу: рівні CEFR -> уроки (граматична тема кожного уроку)
 window.LEVELS = [
-  { id: 'A1', name: 'Beginner', lessons: ['present_simple', 'present_continuous', 'past_simple', 'future_simple'] },
-  { id: 'A2', name: 'Pre-Intermediate', lessons: ['going_to', 'past_continuous', 'present_perfect', 'mixed'] },
-  { id: 'B1', name: 'Intermediate', lessons: ['present_perfect_continuous', 'past_perfect', 'future_continuous', 'mixed'] },
-  { id: 'B2', name: 'Upper-Intermediate', lessons: ['past_perfect_continuous', 'future_perfect', 'future_perfect_continuous', 'mixed'] },
-  { id: 'C1', name: 'Advanced', lessons: ['mixed', 'mixed', 'mixed', 'mixed'] },
-  { id: 'C2', name: 'Proficiency', lessons: ['mixed', 'mixed', 'mixed', 'mixed'] }
+  // 10 уроків на рівень: кожен час двічі (вступ + закріплення), між ними мікс-повторення
+  { id: 'A1', name: 'Beginner', lessons: ['present_simple', 'present_simple', 'present_continuous', 'present_continuous', 'mixed', 'past_simple', 'past_simple', 'future_simple', 'future_simple', 'mixed'] },
+  { id: 'A2', name: 'Pre-Intermediate', lessons: ['going_to', 'going_to', 'past_continuous', 'past_continuous', 'mixed', 'present_perfect', 'present_perfect', 'present_perfect', 'mixed', 'mixed'] },
+  { id: 'B1', name: 'Intermediate', lessons: ['present_perfect_continuous', 'present_perfect_continuous', 'past_perfect', 'past_perfect', 'mixed', 'future_continuous', 'future_continuous', 'mixed', 'mixed', 'mixed'] },
+  { id: 'B2', name: 'Upper-Intermediate', lessons: ['past_perfect_continuous', 'past_perfect_continuous', 'future_perfect', 'future_perfect', 'mixed', 'future_perfect_continuous', 'future_perfect_continuous', 'mixed', 'mixed', 'mixed'] },
+  { id: 'C1', name: 'Advanced', lessons: ['mixed', 'mixed', 'mixed', 'mixed', 'mixed', 'mixed', 'mixed', 'mixed', 'mixed', 'mixed'] },
+  { id: 'C2', name: 'Proficiency', lessons: ['mixed', 'mixed', 'mixed', 'mixed', 'mixed', 'mixed', 'mixed', 'mixed', 'mixed', 'mixed'] }
 ];
