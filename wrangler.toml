@@ -11,6 +11,12 @@ binding = "ASSETS"
 [ai]
 binding = "AI"
 
+# База статистики для адміна (користувачі, активність, донати)
+[[d1_databases]]
+binding = "DB"
+database_name = "english-up-db"
+database_id = "f431d238-1351-4d62-91c0-84da4f602622"
+
 [vars]
 MODEL = "claude-haiku-4-5"
 # Після першого деплою встав сюди URL воркера (з / в кінці) і задеплой ще раз
