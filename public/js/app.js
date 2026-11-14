@@ -323,6 +323,8 @@
       var sents = U.shuffle(Content.sentencesFor(tids));
       sents.slice(0, 4).forEach(function (s) { items.push({ type: 'gap', s: s }); });
       sents.slice(4, 6).forEach(function (s, i) { items.push({ type: 'tr', s: s, dir: i ? 'from_en' : 'to_en' }); });
+      var idi = window.lessonIdioms ? window.lessonIdioms(level, n) : [];
+      if (idi.length) items.push({ type: 'idioms', list: idi }); // ідіоми в кінці уроку
       replaceTop(newSession(title, items, function (score) {
         var key = lessonKey(level, n), rec = State.p.lessons[key] || {};
         var pass = score >= 0.6;
@@ -385,7 +387,7 @@
       if (saveObj) h += '<button class="btn sec big" data-act="save-mistake" ' + (saved ? 'disabled' : '') + '>' + (saved ? '✓ ' + t('in_dict') : '+ ' + t(saveObj.kind === 's' ? 'save_sentence' : 'save_word')) + '</button>';
       h += '<div class="row2"><button class="btn sec" data-act="retry">↻ ' + t('try_again') + '</button><button class="btn" data-act="next">' + (pg.i + 1 < pg.items.length ? t('next') : t('finish')) + '</button></div>';
     }
-    else if (it.type === 'words' || it.type === 'rule' || it.done) h += '<button class="btn big" data-act="next">' + (pg.i + 1 < pg.items.length ? t('next') : t('finish')) + '</button>';
+    else if (it.type === 'words' || it.type === 'rule' || it.type === 'idioms' || it.done) h += '<button class="btn big" data-act="next">' + (pg.i + 1 < pg.items.length ? t('next') : t('finish')) + '</button>';
     else if (it.type !== 'quiz') h += '<button class="btn big" data-act="check">' + t('check') + '</button>';
     return h;
   };
@@ -393,6 +395,15 @@
   Items.words = function (it) {
     return '<h3>' + t('new_words') + (it.title ? ' · ' + esc(it.title) : '') + '</h3><p class="muted small">' + t('new_words_hint') + '</p><div class="card">' + it.words.map(function (w) { return wordRow(w); }).join('') + '</div>' +
       '<button class="btn sec" data-act="add-all">' + t('add_all') + '</button>';
+  };
+  Items.idioms = function (it) {
+    return '<h3>💬 ' + t('idioms_title') + '</h3><p class="muted small">' + t('idioms_hint') + '</p>' + it.list.map(function (x) {
+      var id = R(x), inDict = Dict.has(x.w);
+      return '<div class="card idiom"><div class="word"><button class="icon speak" data-act="speak" data-r="' + id + '">🔊</button>' +
+        '<div class="wbody"><b>' + esc(x.w) + '</b><div class="muted">' + esc(wordTr(x)) + '</div></div>' +
+        '<button class="icon ' + (inDict ? 'on' : '') + '" data-act="dict-add" data-r="' + id + '">' + (inDict ? '✓' : '+') + '</button></div>' +
+        '<div class="exl"><button class="icon speak" data-act="say" data-v="' + esc(x.ex) + '">🔊</button><div><i>' + esc(x.ex) + '</i></div></div></div>';
+    }).join('');
   };
   Items.rule = function (it) {
     var x = Content.tense(it.id);
