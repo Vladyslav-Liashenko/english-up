@@ -100,7 +100,8 @@
     h += '<h3>' + t('weekly') + ' <span class="muted small">+' + Game.WEEKLY_XP + ' XP</span></h3><div class="card">' + p.weekly.quests.map(questRow).join('') + '</div>';
     h += '<h3>' + t('quick') + '</h3><div class="grid2">' +
       tile('tab', 'tenses', '⏳', t('tenses_sheet')) + tile('dictsub', 'verbs', '⚡', t('irregular')) +
-      tile('dictsub', 'cards', '🃏', t('cards') + ' (' + State.dict.items.length + ')') + tile('open', 'qa', '❓', t('ask')) + '</div>';
+      tile('dictsub', 'cards', '🃏', t('cards') + ' (' + State.dict.items.length + ')') + tile('open', 'qa', '❓', t('ask')) + '</div>' +
+      '<button class="card donate-cta" data-act="open" data-v="donate"><span>⭐</span><div><b>' + t('donate') + '</b><div class="muted small">' + t('donate_sub') + '</div></div><span class="arrow">›</span></button>';
     return h;
   };
   function tile(act, v, icon, label, desc) {
@@ -230,9 +231,44 @@
       return '<div class="a' + (p.ach[a.id] ? ' on' : '') + '"><span>' + a.icon + '</span><small>' + esc(t('ach_' + a.id)) + '</small></div>';
     }).join('') + '</div>';
     if (p.essays.length) h += '<h3>' + t('essays_hist') + '</h3><div class="card">' + p.essays.slice(0, 10).map(function (e) { return '<div class="lrow static"><span class="ln">' + e.score + '</span><span class="lt">' + esc(e.topic) + '</span><span class="muted small">' + e.date + '</span></div>'; }).join('') + '</div>';
+    h += '<button class="btn big" data-act="open" data-v="donate">⭐ ' + t('donate') + '</button>';
     h += '<button class="btn sec big" data-act="open" data-v="settings">⚙️ ' + t('settings') + '</button>';
     return h;
   };
+
+  // ----- Донат зірками Telegram -----
+  var DONATE_PRESETS = [100, 500, 1000];
+  Pages.donate = function (pg) {
+    var p = State.p, n = pg.amount || 0;
+    return head(t('donate'), t('donate_sub')) +
+      '<div class="card center"><div class="ti big">💛</div><p>' + t('donate_text') + '</p></div>' +
+      '<h3>' + t('donate_choose') + '</h3><div class="grid3">' + DONATE_PRESETS.map(function (x) {
+        return '<button class="chip star' + (!pg.custom && n === x ? ' on' : '') + '" data-act="donate-pick" data-v="' + x + '"><b>⭐ ' + x + '</b></button>';
+      }).join('') + '</div>' +
+      '<h3>' + t('donate_own') + '</h3><input id="donate-in" type="number" inputmode="numeric" min="1" max="10000" placeholder="' + t('donate_ph') + '" value="' + (pg.custom && n ? n : '') + '">' +
+      (pg.busy ? spinner(t('loading')) : '<button class="btn big" id="donate-btn" data-act="donate-go" ' + (n ? '' : 'disabled') + '>' + t('donate_btn', { n: n || '…' }) + '</button>') +
+      (p.donated ? '<p class="muted small center">' + t('donate_total', { n: p.donated }) + '</p>' : '') +
+      '<p class="muted small center">' + t('donate_note') + '</p>';
+  };
+  async function donate(pg) {
+    var n = Math.floor(pg.amount || 0);
+    if (!(n >= 1 && n <= 10000)) return UI.toast(t('donate_range'));
+    if (!E.inTg || !tg.isVersionAtLeast || !tg.isVersionAtLeast('6.1')) return UI.toast(t('donate_tg_only'), 2500);
+    pg.busy = true; rerender();
+    try {
+      var r = await fetch((window.API_BASE || '') + '/api/donate', { method: 'POST', headers: Api.headers(), body: JSON.stringify({ amount: n, lang: L() }) });
+      var j = await r.json();
+      if (!r.ok || !j.link) throw new Error(j.error || 'invoice');
+      tg.openInvoice(j.link, function (status) {
+        if (status === 'paid') {
+          State.p.donated = (State.p.donated || 0) + n; Game.checkAch(); State.save(true);
+          UI.haptic('success'); UI.toast('💛 ' + t('donate_thanks'), 3000);
+        } else if (status === 'failed') UI.toast(t('donate_failed'), 2500);
+        if (top() === pg) rerender();
+      });
+    } catch (e) { UI.toast(t('donate_failed') + ' (' + e.message + ')', 3000); }
+    pg.busy = false; if (top() === pg) rerender();
+  }
 
   Pages.settings = function () {
     var p = State.p;
@@ -691,6 +727,8 @@
     if (!items.length) return;
     push(newSession(t('sent_train'), items));
   };
+  A['donate-pick'] = function (d) { var pg = top(); pg.amount = +d.v; pg.custom = false; UI.haptic('light'); rerender(); };
+  A['donate-go'] = function () { donate(top()); };
   A.next = nextItem;
   A.check = checkItem;
   A.pick = function (d) {
@@ -759,6 +797,10 @@
     if (e.target.id === 'vsearch') {
       nav.verbQ = e.target.value; var pos = e.target.selectionStart;
       rerender(); var s = document.getElementById('vsearch'); s.focus(); s.setSelectionRange(pos, pos);
+    } else if (e.target.id === 'donate-in') {
+      var dp = top(); dp.amount = Math.max(0, Math.floor(+e.target.value || 0)); dp.custom = true;
+      root.querySelectorAll('.chip.star').forEach(function (c) { c.classList.remove('on'); });
+      var b = document.getElementById('donate-btn'); if (b) { b.disabled = !dp.amount; b.textContent = t('donate_btn', { n: dp.amount || '…' }); }
     } else if (e.target.id === 'essay-in') {
       var pg = top(); pg.text = e.target.value;
       var w = document.getElementById('wc'); if (w) w.textContent = t('words_count', { n: wc(pg.text), m: MIN_WORDS[State.p.cefr] });
