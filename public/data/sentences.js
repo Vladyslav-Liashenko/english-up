@@ -65,6 +65,71 @@ future_perfect_continuous|By 6 pm she [will have been studying] for ten hours.|s
 future_perfect_continuous|Next month we [will have been living] here for a year.|live|Наступного місяця буде рік, як ми тут живемо.|В следующем месяце будет год, как мы здесь живём.
 future_perfect_continuous|He [won't have been driving] long when he gets tired.|not drive|Він недовго їхатиме, коли втомиться.|Он недолго будет ехать, когда устанет.
 future_perfect_continuous|How long [will] you [have been learning] English by then?|you learn|Скільки ти вже вчитимеш англійську на той час?|Сколько ты уже будешь учить английский к тому времени?
+present_simple|My brother [lives] in Lviv.|live|Мій брат живе у Львові.|Мой брат живёт во Львове.
+present_simple|I [don't eat] meat.|not eat|Я не їм м'ясо.|Я не ем мясо.
+present_simple|[Does] she [work] on Saturdays?|she work|Вона працює по суботах?|Она работает по субботам?
+present_simple|They often [go] to the gym after work.|go|Вони часто ходять у спортзал після роботи.|Они часто ходят в спортзал после работы.
+present_simple|Water [boils] at 100 degrees.|boil|Вода кипить при 100 градусах.|Вода кипит при 100 градусах.
+present_continuous|We [are waiting] for the bus.|wait|Ми чекаємо на автобус.|Мы ждём автобус.
+present_continuous|He [is writing] an email to his boss.|write|Він пише лист своєму начальнику.|Он пишет письмо своему начальнику.
+present_continuous|I [am not watching] TV, you can turn it off.|not watch|Я не дивлюся телевізор, можеш вимкнути.|Я не смотрю телевизор, можешь выключить.
+present_continuous|[Is] she [cooking] dinner now?|she cook|Вона зараз готує вечерю?|Она сейчас готовит ужин?
+present_continuous|The children [are playing] in the park.|play|Діти граються в парку.|Дети играют в парке.
+past_simple|I [met] my friend in the city centre.|meet|Я зустрів друга в центрі міста.|Я встретил друга в центре города.
+past_simple|She [didn't go] to work on Monday.|not go|У понеділок вона не ходила на роботу.|В понедельник она не ходила на работу.
+past_simple|We [watched] a good film last night.|watch|Учора ввечері ми дивилися гарний фільм.|Вчера вечером мы смотрели хороший фильм.
+past_simple|[Did] they [finish] the project on time?|they finish|Вони закінчили проєкт вчасно?|Они закончили проект вовремя?
+past_simple|He [lost] his phone two days ago.|lose|Він загубив телефон два дні тому.|Он потерял телефон два дня назад.
+future_simple|Don't worry, I [will call] you tonight.|call|Не хвилюйся, я подзвоню тобі ввечері.|Не волнуйся, я позвоню тебе вечером.
+future_simple|Maybe she [will come] later.|come|Можливо, вона прийде пізніше.|Может быть, она придёт позже.
+future_simple|I [won't tell] anyone.|not tell|Я нікому не скажу.|Я никому не скажу.
+future_simple|[Will] it [be] cold tomorrow?|it be|Завтра буде холодно?|Завтра будет холодно?
+future_simple|I'm hungry. I think I [will order] a pizza.|order|Я голодний. Думаю, замовлю піцу.|Я голоден. Думаю, закажу пиццу.
+going_to|They [are going to get] married in June.|get|Вони збираються одружитися в червні.|Они собираются пожениться в июне.
+going_to|I [am going to visit] my grandma this weekend.|visit|Цими вихідними я збираюся відвідати бабусю.|В эти выходные я собираюсь навестить бабушку.
+going_to|He [isn't going to work] tomorrow.|not work|Завтра він не збирається працювати.|Завтра он не собирается работать.
+going_to|What [are] you [going to do] tonight?|you do|Що ти збираєшся робити сьогодні ввечері?|Что ты собираешься делать сегодня вечером?
+going_to|Be careful! You [are going to fall].|fall|Обережно! Ти зараз впадеш.|Осторожно! Ты сейчас упадёшь.
+past_continuous|It [was raining] all day yesterday.|rain|Учора весь день ішов дощ.|Вчера весь день шёл дождь.
+past_continuous|She [was talking] on the phone when I came in.|talk|Вона говорила по телефону, коли я зайшов.|Она говорила по телефону, когда я вошёл.
+past_continuous|We [weren't sleeping] at midnight.|not sleep|Ми не спали опівночі.|Мы не спали в полночь.
+past_continuous|[Were] they [working] at 9 last night?|they work|Вони працювали вчора о 9 вечора?|Они работали вчера в 9 вечера?
+past_continuous|I [was driving] home when I saw the accident.|drive|Я їхав додому, коли побачив аварію.|Я ехал домой, когда увидел аварию.
+present_perfect|I [have just finished] my homework.|just finish|Я щойно закінчив домашнє завдання.|Я только что закончил домашнее задание.
+present_perfect|They [have known] each other for ten years.|know|Вони знайомі вже десять років.|Они знакомы уже десять лет.
+present_perfect|She [hasn't called] me yet.|not call|Вона ще не подзвонила мені.|Она ещё не позвонила мне.
+present_perfect|[Have] you [finished] the report?|you finish|Ти вже закінчив звіт?|Ты уже закончил отчёт?
+present_perfect|I [have lost] my keys. I can't open the door.|lose|Я загубив ключі. Не можу відчинити двері.|Я потерял ключи. Не могу открыть дверь.
+present_perfect_continuous|You look tired. [Have] you [been working] all day?|you work|Ти виглядаєш втомленим. Ти працював цілий день?|Ты выглядишь уставшим. Ты работал весь день?
+present_perfect_continuous|We [have been living] in Kyiv since 2018.|live|Ми живемо в Києві з 2018 року.|Мы живём в Киеве с 2018 года.
+present_perfect_continuous|He [has been studying] for the exam all week.|study|Він готується до іспиту весь тиждень.|Он готовится к экзамену всю неделю.
+present_perfect_continuous|I [haven't been feeling] well lately.|not feel|Останнім часом я погано почуваюся.|В последнее время я плохо себя чувствую.
+present_perfect_continuous|She [has been waiting] for you for an hour.|wait|Вона чекає на тебе вже годину.|Она ждёт тебя уже час.
+past_perfect|When I arrived, they [had already eaten].|already eat|Коли я прийшов, вони вже поїли.|Когда я пришёл, они уже поели.
+past_perfect|He was nervous because he [had never flown] before.|never fly|Він нервував, бо ніколи раніше не літав.|Он нервничал, потому что никогда раньше не летал.
+past_perfect|We [hadn't finished] dinner when the guests came.|not finish|Ми ще не закінчили вечеряти, коли прийшли гості.|Мы ещё не закончили ужинать, когда пришли гости.
+past_perfect|[Had] she [left] before you called?|she leave|Вона вже пішла до того, як ти подзвонив?|Она уже ушла до того, как ты позвонил?
+past_perfect|I realised that I [had forgotten] my wallet.|forget|Я зрозумів, що забув гаманець.|Я понял, что забыл кошелёк.
+past_perfect_continuous|His eyes were red because he [had been crying].|cry|Його очі були червоні, бо він плакав.|Его глаза были красными, потому что он плакал.
+past_perfect_continuous|We [had been driving] for five hours before we stopped.|drive|Ми їхали п'ять годин, перш ніж зупинилися.|Мы ехали пять часов, прежде чем остановились.
+past_perfect_continuous|She [had been working] there for years before she left.|work|Вона працювала там роками, перш ніж звільнилася.|Она работала там годами, прежде чем уволилась.
+past_perfect_continuous|The ground was wet. It [had been raining].|rain|Земля була мокра. Ішов дощ.|Земля была мокрой. Шёл дождь.
+past_perfect_continuous|They [hadn't been talking] long when the lights went out.|not talk|Вони недовго говорили, коли згасло світло.|Они недолго говорили, когда погас свет.
+future_continuous|Don't call at 8, I [will be driving].|drive|Не дзвони о восьмій, я буду за кермом.|Не звони в восемь, я буду за рулём.
+future_continuous|Tomorrow at noon we [will be having] lunch.|have|Завтра опівдні ми будемо обідати.|Завтра в полдень мы будем обедать.
+future_continuous|She [won't be sleeping] at 10 pm.|not sleep|О 22:00 вона ще не спатиме.|В 22:00 она ещё не будет спать.
+future_continuous|What [will] you [be doing] this time next week?|you do|Що ти робитимеш наступного тижня в цей час?|Что ты будешь делать на следующей неделе в это время?
+future_continuous|At 9 am I [will be working] on the report.|work|О 9 ранку я працюватиму над звітом.|В 9 утра я буду работать над отчётом.
+future_perfect|By 2030 they [will have built] a new bridge.|build|До 2030 року вони збудують новий міст.|К 2030 году они построят новый мост.
+future_perfect|I [will have saved] enough money by summer.|save|До літа я накопичу достатньо грошей.|К лету я накоплю достаточно денег.
+future_perfect|She [won't have finished] the book by Friday.|not finish|Вона не дочитає книгу до п'ятниці.|Она не дочитает книгу к пятнице.
+future_perfect|[Will] they [have left] by the time we arrive?|they leave|Вони вже поїдуть до нашого приїзду?|Они уже уедут к нашему приезду?
+future_perfect|By the end of the day I [will have answered] all emails.|answer|До кінця дня я відповім на всі листи.|К концу дня я отвечу на все письма.
+future_perfect_continuous|By noon I [will have been waiting] for three hours.|wait|До полудня я чекатиму вже три години.|К полудню я буду ждать уже три часа.
+future_perfect_continuous|In May she [will have been teaching] for ten years.|teach|У травні буде десять років, як вона викладає.|В мае будет десять лет, как она преподаёт.
+future_perfect_continuous|By then we [will have been travelling] for a month.|travel|На той час ми подорожуватимемо вже місяць.|К тому времени мы будем путешествовать уже месяц.
+future_perfect_continuous|They [won't have been working] here long by Christmas.|not work|До Різдва вони працюватимуть тут недовго.|К Рождеству они будут работать здесь недолго.
+future_perfect_continuous|How long [will] he [have been running] by 7 o'clock?|he run|Скільки він уже бігатиме до сьомої?|Сколько он уже будет бегать к семи часам?
 `;
 
 window.SENTENCES = window.SENTENCES_RAW.trim().split('\n').map(function (line, i) {
