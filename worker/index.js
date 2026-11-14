@@ -7,8 +7,8 @@
  *  - POST /webhook  — бот: /start з кнопкою відкриття Mini App
  *  - GET  /setup?key=WEBHOOK_SECRET — реєструє webhook і кнопку меню
  *
- * Secrets: ANTHROPIC_API_KEY, BOT_TOKEN, WEBHOOK_SECRET
- * Vars:    MODEL, APP_URL, DAILY_AI_LIMIT, DEV_MODE
+ * Secrets: BOT_TOKEN, WEBHOOK_SECRET, ANTHROPIC_API_KEY (опційно: без нього працює безкоштовний Workers AI)
+ * Vars:    MODEL (Claude), CF_MODEL (Workers AI), APP_URL, DAILY_AI_LIMIT, DEV_MODE
  * Bindings: AI (Workers AI), LIMITS (KV, опційно — для денного ліміту)
  */
 
@@ -93,6 +93,26 @@ async function rateLimit(env, uid) {
   await env.LIMITS.put(key, String(n + 1), { expirationTtl: 90000 });
 }
 
+// Якщо задано ANTHROPIC_API_KEY — Claude, інакше безкоштовний Workers AI
+async function llm(env, system, messages, maxTokens = 900) {
+  if (env.ANTHROPIC_API_KEY) return claude(env, system, messages, maxTokens);
+  return workersAI(env, system, messages, maxTokens);
+}
+const CF_MODELS = ['@cf/meta/llama-3.3-70b-instruct-fp8-fast', '@cf/meta/llama-3.1-8b-instruct-fast'];
+async function workersAI(env, system, messages, maxTokens) {
+  if (!env.AI) throw httpError('Workers AI binding "AI" is not configured', 500);
+  const models = env.CF_MODEL ? [env.CF_MODEL].concat(CF_MODELS) : CF_MODELS;
+  let lastErr;
+  for (const model of models) {
+    try {
+      const res = await env.AI.run(model, { messages: [{ role: 'system', content: system }].concat(messages), max_tokens: maxTokens, temperature: 0.4 });
+      const out = res && res.response;
+      if (out == null) throw new Error('empty response');
+      return typeof out === 'string' ? out.trim() : JSON.stringify(out);
+    } catch (e) { lastErr = e; console.error('Workers AI', model, e.message); }
+  }
+  throw httpError('AI error: ' + (lastErr && lastErr.message), 502);
+}
 async function claude(env, system, messages, maxTokens = 900) {
   if (!env.ANTHROPIC_API_KEY) throw httpError('ANTHROPIC_API_KEY is not set', 500);
   const r = await fetch('https://api.anthropic.com/v1/messages', {
@@ -105,6 +125,7 @@ async function claude(env, system, messages, maxTokens = 900) {
   return (j.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('').trim();
 }
 function parseJSON(text) {
+  text = String(text || '');
   const s = text.replace(/```(?:json)?/g, '');
   const a = s.indexOf('{'), b = s.lastIndexOf('}');
   const a2 = s.indexOf('['), b2 = s.lastIndexOf(']');
@@ -143,21 +164,21 @@ Rules:
 Return ONLY JSON: {"reply":"...","tr":"...","better":"...","correction":"..."}`;
       let messages = cleanHistory(body.history);
       if (!messages.length) messages = [{ role: 'user', content: '(Start the conversation. Greet me and ask the first question.)' }];
-      return json(parseJSON(await claude(env, system, messages, 600)));
+      return json(parseJSON(await llm(env, system, messages, 600)));
     }
     case 'grammar_qa': {
       const system = `You are an experienced English grammar teacher. Answer the student's question in ${lang}. Student level: ${level}.
 Be short and clear: a rule in 1-3 sentences, a formula if relevant, 2-4 English examples with ${lang} translation, and a typical mistake. Use simple markdown (**bold**, lists). If the question is not about English, politely bring it back to English learning.`;
       const messages = cleanHistory(body.history, 6);
       messages.push({ role: 'user', content: clip(body.question, 1000) });
-      return json({ answer: await claude(env, system, fixAlternation(messages), 900) });
+      return json({ answer: await llm(env, system, fixAlternation(messages), 900) });
     }
     case 'check_translation': {
       const dirText = body.direction === 'to_en' ? `from ${lang} into English` : `from English into ${lang}`;
       const system = `You check a language learner's translation ${dirText}. Level: ${level}. Accept any natural, grammatically correct translation that keeps the meaning, even if it differs from the reference. Ignore punctuation and capitalization.
 Return ONLY JSON: {"correct":true|false,"score":0-100,"corrected":"best corrected version of the student's translation in the target language","explanation":"1-2 short sentences in ${lang}: what is wrong or why it's good"}`;
       const msg = `Source: ${clip(body.source, 500)}\nReference: ${clip(body.reference, 500)}\nStudent: ${clip(body.answer, 500)}`;
-      return json(parseJSON(await claude(env, system, [{ role: 'user', content: msg }], 400)));
+      return json(parseJSON(await llm(env, system, [{ role: 'user', content: msg }], 400)));
     }
     case 'check_essay': {
       const system = `You are an English teacher checking a student's essay. Expected level: ${level}. Write explanations in ${lang}.
@@ -165,7 +186,7 @@ Return ONLY JSON:
 {"score":0-100,"level":"estimated CEFR level like B1","summary":"2-3 sentences in ${lang}: overall impression, structure, vocabulary, relevance to the topic","mistakes":[{"orig":"wrong fragment","fix":"corrected fragment","why":"short reason in ${lang}"}],"corrected":"the full corrected essay in English","tips":["2-4 short tips in ${lang}"]}
 List up to 12 most important mistakes.`;
       const msg = `Topic: ${clip(body.topic, 200)}\n\nEssay:\n${clip(body.text, 6000)}`;
-      return json(parseJSON(await claude(env, system, [{ role: 'user', content: msg }], 2500)));
+      return json(parseJSON(await llm(env, system, [{ role: 'user', content: msg }], 2500)));
     }
     case 'lesson_words': {
       const count = Math.min(15, Math.max(10, parseInt(body.count, 10) || 12));
@@ -174,11 +195,11 @@ List up to 12 most important mistakes.`;
 Return ONLY JSON: {"title":"short English topic name","words":[{"w":"English word or short phrase","ipa":"British IPA without slashes","uk":"Ukrainian translation","ru":"Russian translation"}]}`;
       const msg = `Create lesson #${parseInt(body.lesson, 10) || 1} for level ${level}, focus: ${track}. Pick one coherent topic suitable for this lesson number (later lessons = more advanced topics). Give exactly ${count} useful words/phrases of this level.
 Do NOT use these words: ${exclude || '-'}`;
-      return json(parseJSON(await claude(env, system, [{ role: 'user', content: msg }], 1500)));
+      return json(parseJSON(await llm(env, system, [{ role: 'user', content: msg }], 1500)));
     }
     case 'word_info': {
       const system = `You are an English-Ukrainian-Russian dictionary. Return ONLY JSON: {"w":"the English word/phrase (fix spelling if needed)","ipa":"British IPA without slashes","uk":"1-3 main Ukrainian translations","ru":"1-3 main Russian translations"}. If the input is in Ukrainian or Russian, translate it to English and fill "w" with the English word.`;
-      return json(parseJSON(await claude(env, system, [{ role: 'user', content: clip(body.word, 80) }], 200)));
+      return json(parseJSON(await llm(env, system, [{ role: 'user', content: clip(body.word, 80) }], 200)));
     }
     default:
       throw httpError('Unknown mode', 400);
