@@ -39,7 +39,7 @@
   }
   var lastAnim = '';
   function push(pg) { nav.stack.push(pg); render(); window.scrollTo(0, 0); }
-  function pop() { if (Rec.rec) Rec.stop(); nav.stack.pop(); render(); window.scrollTo(0, 0); }
+  function pop() { if (Rec.rec) Rec.stop(); if (Live.rec) { try { Live.rec.abort(); } catch (e) { } Live.rec = null; } nav.stack.pop(); render(); window.scrollTo(0, 0); }
   function replaceTop(pg) { nav.stack[nav.stack.length - 1] = pg; render(); window.scrollTo(0, 0); }
   function rerender() { render(true); }
   function top() { return nav.stack[nav.stack.length - 1]; }
@@ -663,10 +663,11 @@
       if (m.role === 'assistant') {
         return '<div class="msg ai"><div>' + esc(m.content) + '</div><div class="mtools"><button class="icon speak" data-act="say" data-v="' + esc(m.content) + '">🔊</button>' + (m.tr ? '<button class="icon" data-act="show-tr" data-v="' + i + '">🌐</button>' : '') + '</div>' + (m.showTr ? '<div class="muted small">' + esc(m.tr) + '</div>' : '') + '</div>';
       }
-      return '<div class="msg me"><div>' + esc(m.content) + '</div>' + (m.better ? '<div class="corr">✏️ <b>' + esc(m.better) + '</b>' + (m.correction ? '<div class="small">' + esc(m.correction) + '</div>' : '') + '</div>' : (m.checked ? '<div class="corr ok">✓</div>' : '')) + '</div>';
+      return '<div class="msg me"><div>' + esc(m.content) + '</div>' + (m.better ? '<div class="corr">✏️ ' + t('better') + ': <b>' + esc(m.better) + '</b>' + (m.correction ? '<div class="small">' + esc(m.correction) + '</div>' : '') + '</div>' : (m.checked ? '<div class="corr ok">✓</div>' : '')) + '</div>';
     }).join('') + (pg.busy ? '<div class="msg ai typing"><span></span><span></span><span></span></div>' : '') + '</div>';
-    h += '<div class="composer">' + (Rec.supported() ? '<button class="mic' + (pg.rec ? ' rec' : '') + '" data-act="mic">' + (pg.rec ? '■' : '🎙') + '</button>' : '') +
-      '<textarea id="chat-in" rows="1" placeholder="' + (pg.rec ? t('recording') : t('say_ph')) + '"></textarea><button class="send" data-act="chat-send">➤</button></div>';
+    var ph = pg.stt ? '⏳ ' + t('recognizing') : pg.rec ? (pg.live ? '🔴 ' + t('listening') : '🔴 ' + t('recording')) : t('say_ph');
+    h += '<div class="composer">' + (Rec.supported() || SR ? '<button class="mic' + (pg.rec ? ' rec' : '') + (pg.stt ? ' wait' : '') + '" data-act="mic">' + (pg.rec ? '■' : pg.stt ? '…' : '🎙') + '</button>' : '') +
+      '<textarea id="chat-in" rows="1" placeholder="' + esc(ph) + '">' + esc(pg.draft || '') + '</textarea><button class="send" data-act="chat-send">➤</button></div>';
     return h;
   };
   async function chatTurn(pg, text) {
@@ -871,25 +872,67 @@
   A.chat = function (d) { var pg = { type: 'chat', scenario: d.v, msgs: [] }; push(pg); chatTurn(pg, ''); };
   A['chat-send'] = function () {
     var pg = top(), inp = document.getElementById('chat-in'), v = (inp.value || '').trim();
-    if (!v || pg.busy) return; chatTurn(pg, v);
+    if (!v || pg.busy || pg.stt) return;
+    if (Live.rec) { try { Live.rec.abort(); } catch (e) { } Live.rec = null; }
+    if (pg.rec && !pg.live) Rec.stop();
+    pg.rec = false; pg.live = false; pg.draft = '';
+    chatTurn(pg, v);
   };
   A['show-tr'] = function (d) { var m = top().msgs[+d.v]; m.showTr = !m.showTr; rerender(); };
-  A.mic = async function () {
-    var pg = top();
-    if (pg.busy) return;
-    if (!pg.rec) {
-      try { await Rec.start(); pg.rec = true; UI.haptic('medium'); rerender(); }
-      catch (e) { UI.toast(t('mic_denied'), 2500); }
-      return;
-    }
-    pg.rec = false; pg.busy = true; rerender();
+  // ----- Голос: живе розпізнавання (текст пишеться одразу), інакше запис -> сервер -----
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var Live = { rec: null, broken: false };
+  function autoGrow(el) { el.style.height = 'auto'; el.style.height = Math.min(120, el.scrollHeight) + 'px'; }
+  function startLive(pg) {
+    var r = new SR();
+    r.lang = 'en-US'; r.interimResults = true; r.continuous = true; r.maxAlternatives = 1;
+    var base = pg.draft ? pg.draft.trim() + ' ' : '', fin = '', heard = false;
+    r.onresult = function (e) {
+      var interim = '';
+      for (var i = e.resultIndex; i < e.results.length; i++) {
+        var tx = e.results[i][0].transcript;
+        if (e.results[i].isFinal) fin += tx + ' '; else interim += tx;
+      }
+      heard = true;
+      pg.draft = (base + fin + interim).replace(/\s+/g, ' ').replace(/^\s+/, '');
+      var el = document.getElementById('chat-in'); if (el) { el.value = pg.draft; autoGrow(el); }
+    };
+    r.onerror = function (e) { if (['not-allowed', 'service-not-allowed', 'audio-capture', 'network', 'language-not-supported'].indexOf(e.error) >= 0) Live.broken = true; };
+    r.onend = function () {
+      Live.rec = null; pg.rec = false; pg.live = false;
+      if (top() === pg) rerender();
+      if (!heard) { // нічого не розпізнали: далі використовуємо запис + сервер
+        var auto = Live.broken; Live.broken = true;
+        if (auto && top() === pg) A.mic(); else UI.toast(t('not_heard'));
+      }
+    };
+    r.start(); Live.rec = r; pg.rec = true; pg.live = true; UI.haptic('medium'); rerender();
+  }
+  async function stopRecorder(pg) {
+    pg.rec = false; pg.stt = true; rerender();
     try {
       var blob = await Rec.stop();
       var text = await Rec.transcribe(blob);
-      pg.busy = false;
-      if (!text) { UI.toast(t('not_heard')); return rerender(); }
-      chatTurn(pg, text);
-    } catch (e) { pg.busy = false; UI.toast(t('stt_fail')); rerender(); }
+      if (!text) UI.toast(t('not_heard'));
+      else pg.draft = ((pg.draft ? pg.draft.trim() + ' ' : '') + text).trim();
+    } catch (e) { UI.toast(t('stt_fail')); }
+    pg.stt = false;
+    if (top() === pg) { rerender(); var el = document.getElementById('chat-in'); if (el) autoGrow(el); }
+  }
+  A.mic = async function () {
+    var pg = top();
+    if (pg.busy || pg.stt) return;
+    if (pg.rec) { if (pg.live) { if (Live.rec) Live.rec.stop(); } else stopRecorder(pg); return; }
+    if (SR && !Live.broken) { try { startLive(pg); return; } catch (e) { Live.broken = true; } }
+    try {
+      await Rec.start(); pg.rec = true; pg.live = false; pg.t0 = Date.now(); UI.haptic('medium'); rerender();
+      var iv = setInterval(function () {
+        if (!pg.rec || pg.live || top() !== pg) return clearInterval(iv);
+        var s = Math.floor((Date.now() - pg.t0) / 1000), el = document.getElementById('chat-in');
+        if (el) el.placeholder = '🔴 ' + t('recording') + ' 0:' + (s < 10 ? '0' : '') + s;
+        if (s >= 60) { clearInterval(iv); stopRecorder(pg); }
+      }, 500);
+    } catch (e) { UI.toast(t('mic_denied'), 2500); }
   };
   A['qa-chip'] = function (d) { qaAsk(top(), d.v); };
   A['qa-send'] = function () { var pg = top(), v = (document.getElementById('qa-in').value || '').trim(); if (v && !pg.busy) qaAsk(pg, v); };
@@ -912,6 +955,7 @@
       var pg = top(); pg.text = e.target.value;
       var w = document.getElementById('wc'); if (w) w.textContent = t('words_count', { n: wc(pg.text), m: MIN_WORDS[State.p.cefr] });
     } else if (e.target.tagName === 'TEXTAREA' && (e.target.id === 'chat-in' || e.target.id === 'qa-in')) {
+      if (e.target.id === 'chat-in' && top()) top().draft = e.target.value;
       e.target.style.height = 'auto'; e.target.style.height = Math.min(120, e.target.scrollHeight) + 'px';
     }
   });
