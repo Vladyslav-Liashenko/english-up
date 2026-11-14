@@ -161,7 +161,7 @@
       stats: { words: 0, dict: 0, lessons: 0, translate: 0, gap: 0, essay: 0, speak: 0, question: 0, cards: 0, verbs: 0, exams: 0 },
       daily: null, weekly: null, ach: {},
       rate: 0.9, autoplay: true, cardFront: 'en', dir: 'mixed',
-      essays: []
+      essays: [], donated: 0
     };
   }
   var State = { p: null, dict: { items: [] }, learned: { items: [] } };
@@ -228,7 +228,8 @@
     { id: 'verbs100', icon: '⚡', test: function (p) { return p.stats.verbs >= 100; } },
     { id: 'grammar_all', icon: '⏳', test: function (p) { return Object.keys(p.grammar).length >= window.TENSES.length; } },
     { id: 'level_up', icon: '🚀', test: function (p) { return p.stats.exams >= 1; } },
-    { id: 'xp1000', icon: '💎', test: function (p) { return p.xp >= 1000; } }
+    { id: 'xp1000', icon: '💎', test: function (p) { return p.xp >= 1000; } },
+    { id: 'supporter', icon: '💛', test: function (p) { return (p.donated || 0) > 0; } }
   ];
   var Game = {
     DAILY_XP: 20, DAILY_BONUS: 50, WEEKLY_XP: 100, ACH: ACH,
