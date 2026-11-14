@@ -934,16 +934,16 @@
     get: function (word) {
       var k = String(word).toLowerCase();
       if (Img.mem[k] !== undefined) return Promise.resolve(Img.mem[k]);
-      try { var c = localStorage.getItem('img2_' + k); if (c) { Img.mem[k] = JSON.parse(c); return Promise.resolve(Img.mem[k]); } } catch (e) { }
+      try { var c = localStorage.getItem('img3_' + k); if (c) { Img.mem[k] = JSON.parse(c); return Promise.resolve(Img.mem[k]); } } catch (e) { }
       if (Img.pending[k]) return Img.pending[k];
       var q = k.replace(/[^a-z\s-]/g, ' ').trim();
-      Img.pending[k] = fetch('https://api.openverse.org/v1/images/?q=' + encodeURIComponent(q) + '&page_size=5&mature=false')
+      Img.pending[k] = fetch('https://api.openverse.org/v1/images/?q=' + encodeURIComponent(q) + '&page_size=5&mature=false&category=photograph')
         .then(function (r) { return r.ok ? r.json() : null; })
         .then(function (j) {
           if (!j) { delete Img.pending[k]; return null; }
           var r0 = (j.results || []).find(function (x) { return x.thumbnail; });
           var v = r0 ? { u: r0.thumbnail, c: (r0.creator || 'Openverse') + ' · CC ' + String(r0.license || '').toUpperCase() } : null;
-          Img.mem[k] = v; try { localStorage.setItem('img2_' + k, JSON.stringify(v)); } catch (e) { }
+          Img.mem[k] = v; try { localStorage.setItem('img3_' + k, JSON.stringify(v)); } catch (e) { }
           return v;
         }).catch(function () { delete Img.pending[k]; return null; });
       return Img.pending[k];
