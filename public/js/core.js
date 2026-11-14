@@ -366,7 +366,7 @@
         curAudio = new Audio(url);
         curAudio.playbackRate = Math.max(0.7, State.p.rate || 0.9);
         await curAudio.play();
-      } catch (e) { UI.toast(t('tts_fail')); }
+      } catch (e) { if (!Speech.warned) { Speech.warned = true; UI.toast(t('tts_fail')); } }
     }
   };
 
