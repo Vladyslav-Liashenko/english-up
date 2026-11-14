@@ -17,6 +17,8 @@ MODEL = "claude-haiku-4-5"
 APP_URL = "https://english-up.lyashenko462.workers.dev/"
 DAILY_AI_LIMIT = "150"
 DEV_MODE = "0"
+# Кому надсилати сповіщення про донати
+ADMIN_ID = "489191344"
 
 # Опційно: денний ліміт запитів до ІІ на користувача.
 # 1) npx wrangler kv namespace create LIMITS   2) розкоментуй і встав id
