@@ -229,7 +229,9 @@
     { id: 'grammar_all', icon: '⏳', test: function (p) { return Object.keys(p.grammar).length >= window.TENSES.length; } },
     { id: 'level_up', icon: '🚀', test: function (p) { return p.stats.exams >= 1; } },
     { id: 'xp1000', icon: '💎', test: function (p) { return p.xp >= 1000; } },
-    { id: 'supporter', icon: '💛', test: function (p) { return (p.donated || 0) > 0; } }
+    { id: 'supporter', icon: '💛', test: function (p) { return (p.donated || 0) > 0; } },
+    { id: 'friend1', icon: '👥', test: function (p) { return (p.refs || 0) >= 1; } },
+    { id: 'friend5', icon: '🤝', test: function (p) { return (p.refs || 0) >= 5; } }
   ];
   var Game = {
     DAILY_XP: 20, DAILY_BONUS: 50, WEEKLY_XP: 100, ACH: ACH,
