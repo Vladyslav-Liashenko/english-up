@@ -35,6 +35,7 @@ export default {
       if (url.pathname === '/api/tts' && request.method === 'POST') return cors(await handleTTS(request, env));
       if (url.pathname === '/api/donate' && request.method === 'POST') return cors(await handleDonate(request, env));
       if (url.pathname === '/api/ping' && request.method === 'POST') return cors(await handlePing(request, env));
+      if (url.pathname === '/api/ref' && request.method === 'POST') return cors(await handleRef(request, env));
       if (url.pathname === '/api/admin/stats' && request.method === 'POST') return cors(await handleAdminStats(request, env));
       if (url.pathname === '/webhook' && request.method === 'POST') return await handleWebhook(request, env);
       if (url.pathname === '/setup') return await handleSetup(url, env);
@@ -254,7 +255,8 @@ async function ensureSchema(env) {
     env.DB.prepare('CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, first_name TEXT, username TEXT, tg_lang TEXT, lang TEXT, cefr TEXT, track TEXT, xp INTEGER DEFAULT 0, lessons INTEGER DEFAULT 0, words INTEGER DEFAULT 0, streak INTEGER DEFAULT 0, donated INTEGER DEFAULT 0, opens INTEGER DEFAULT 0, first_seen INTEGER, last_seen INTEGER)'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS activity (user_id TEXT, day TEXT, PRIMARY KEY (user_id, day))'),
     env.DB.prepare('CREATE TABLE IF NOT EXISTS donations (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, name TEXT, username TEXT, amount INTEGER, charge_id TEXT, ts INTEGER)'),
-    env.DB.prepare('CREATE TABLE IF NOT EXISTS usage (day TEXT, kind TEXT, n INTEGER DEFAULT 0, PRIMARY KEY (day, kind))')
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS usage (day TEXT, kind TEXT, n INTEGER DEFAULT 0, PRIMARY KEY (day, kind))'),
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS referrals (invitee_id TEXT PRIMARY KEY, inviter_id TEXT, ts INTEGER, activated INTEGER DEFAULT 0, claimed INTEGER DEFAULT 0)')
   ]);
   schemaReady = true;
 }
@@ -277,16 +279,48 @@ async function recordDonation(env, f, p) {
     ]);
   } catch (e) { console.error('donation', e.message); }
 }
+// Реферал: лише для нових користувачів і не сам на себе
+async function addReferral(env, inviteeId, inviterRaw) {
+  const inviter = String(inviterRaw || '').replace(/^ref_/, '');
+  if (!env.DB || !/^\d{3,15}$/.test(inviter) || inviter === String(inviteeId)) return;
+  try {
+    await ensureSchema(env);
+    const exists = await env.DB.prepare('SELECT 1 AS x FROM users WHERE id = ?1').bind(String(inviteeId)).first();
+    if (exists) return;
+    await env.DB.prepare('INSERT OR IGNORE INTO referrals (invitee_id, inviter_id, ts) VALUES (?1, ?2, ?3)').bind(String(inviteeId), inviter, Date.now()).run();
+  } catch (e) { console.error('referral', e.message); }
+}
+let botUsername = null;
+async function getBotUsername(env) {
+  if (botUsername) return botUsername;
+  const r = await tgApi(env, 'getMe', {});
+  botUsername = r && r.result && r.result.username;
+  return botUsername;
+}
+async function handleRef(request, env) {
+  const a = await auth(request, env);
+  const username = await getBotUsername(env);
+  if (!username) throw httpError('Bot username unavailable', 502);
+  let invited = 0, activated = 0;
+  if (env.DB) {
+    await ensureSchema(env);
+    const r = await env.DB.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(activated),0) AS act FROM referrals WHERE inviter_id = ?1').bind(a.id).first();
+    invited = (r && r.n) || 0; activated = (r && r.act) || 0;
+  }
+  return json({ link: `https://t.me/${username}?start=ref_${a.id}`, invited, activated, xpInviter: 100, xpFriend: 50 });
+}
 const isAdmin = (env, user) => !!env.ADMIN_ID && String(user.id) === String(env.ADMIN_ID);
 
 // Відкриття застосунку / завершення уроку: оновлюємо профіль і денну активність
 async function handlePing(request, env) {
   const a = await auth(request, env);
   const b = await request.json().catch(() => ({}));
+  const out = { ok: true, admin: isAdmin(env, a) };
   if (env.DB) {
     try {
       await ensureSchema(env);
       const u = a.user || {}, now = Date.now(), num = (x) => Math.max(0, Math.floor(Number(x) || 0));
+      if (b.ref) await addReferral(env, a.id, b.ref);
       await env.DB.batch([
         env.DB.prepare(`INSERT INTO users (id, first_name, username, tg_lang, lang, cefr, track, xp, lessons, words, streak, opens, first_seen, last_seen)
           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)
@@ -297,9 +331,18 @@ async function handlePing(request, env) {
             num(b.xp), num(b.lessons), num(b.words), num(b.streak), b.open ? 1 : 0, now),
         env.DB.prepare('INSERT OR IGNORE INTO activity (user_id, day) VALUES (?1, ?2)').bind(a.id, dayStr(now))
       ]);
+      // друг уперше відкрив застосунок -> реферал активовано
+      const act = await env.DB.prepare('UPDATE referrals SET activated = 1 WHERE invitee_id = ?1 AND activated = 0').bind(a.id).run();
+      out.welcome = !!(act.meta && act.meta.changes);
+      // нагороди запрошувачу за активованих друзів, які ще не забрав
+      const pend = await env.DB.prepare('SELECT COUNT(*) AS n FROM referrals WHERE inviter_id = ?1 AND activated = 1 AND claimed = 0').bind(a.id).first();
+      if (pend && pend.n) {
+        await env.DB.prepare('UPDATE referrals SET claimed = 1 WHERE inviter_id = ?1 AND activated = 1 AND claimed = 0').bind(a.id).run();
+        out.refReward = pend.n;
+      }
     } catch (e) { console.error('ping', e.message); }
   }
-  return json({ ok: true, admin: isAdmin(env, a) });
+  return json(out);
 }
 
 // Статистика: доступна лише ADMIN_ID
@@ -331,7 +374,9 @@ async function handleAdminStats(request, env) {
     q('SELECT first_name, username, cefr, xp, lessons, streak, donated, last_seen FROM users ORDER BY xp DESC LIMIT 10'),
     q('SELECT first_name, username, cefr, first_seen FROM users ORDER BY first_seen DESC LIMIT 10'),
     q('SELECT kind, n FROM usage WHERE day = ?1 ORDER BY n DESC', today),
-    q('SELECT kind, SUM(n) AS n FROM usage WHERE day >= ?1 GROUP BY kind ORDER BY n DESC', d30)
+    q('SELECT kind, SUM(n) AS n FROM usage WHERE day >= ?1 GROUP BY kind ORDER BY n DESC', d30),
+    q('SELECT COUNT(*) AS n, COALESCE(SUM(activated),0) AS act FROM referrals'),
+    q('SELECT u.first_name, u.username, COUNT(*) AS n, COALESCE(SUM(r.activated),0) AS act FROM referrals r LEFT JOIN users u ON u.id = r.inviter_id GROUP BY r.inviter_id ORDER BY act DESC, n DESC LIMIT 5')
   ]);
   const rows = (i) => r[i].results || [], one = (i) => rows(i)[0] || {};
   return json({
@@ -342,6 +387,7 @@ async function handleAdminStats(request, env) {
     donations: { all: one(13), d30: one(14), recent: rows(15) },
     topUsers: rows(16), newUsers: rows(17),
     usage: { today: rows(18), d30: rows(19) },
+    referrals: { all: one(20), top: rows(21) },
     generated: now
   });
 }
@@ -399,6 +445,8 @@ async function handleWebhook(request, env) {
   }
   if (msg && msg.text && msg.text.startsWith('/start')) {
     const ru = (msg.from && msg.from.language_code) === 'ru';
+    const payload = msg.text.split(' ')[1] || '';
+    if (payload.startsWith('ref_') && msg.from) await addReferral(env, String(msg.from.id), payload);
     await tgApi(env, 'sendMessage', {
       chat_id: msg.chat.id,
       text: ru
