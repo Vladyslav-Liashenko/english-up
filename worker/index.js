@@ -34,6 +34,8 @@ export default {
       if (url.pathname === '/api/stt' && request.method === 'POST') return cors(await handleSTT(request, env));
       if (url.pathname === '/api/tts' && request.method === 'POST') return cors(await handleTTS(request, env));
       if (url.pathname === '/api/donate' && request.method === 'POST') return cors(await handleDonate(request, env));
+      if (url.pathname === '/api/ping' && request.method === 'POST') return cors(await handlePing(request, env));
+      if (url.pathname === '/api/admin/stats' && request.method === 'POST') return cors(await handleAdminStats(request, env));
       if (url.pathname === '/webhook' && request.method === 'POST') return await handleWebhook(request, env);
       if (url.pathname === '/setup') return await handleSetup(url, env);
       if (url.pathname === '/health') return json({ ok: true });
@@ -69,7 +71,7 @@ const hex = (buf) => [...buf].map((b) => b.toString(16).padStart(2, '0')).join('
 async function auth(request, env) {
   const initData = request.headers.get('X-Init-Data') || '';
   if (!initData) {
-    if (env.DEV_MODE === '1') return { id: 'dev' };
+    if (env.DEV_MODE === '1') return { id: 'dev', user: { id: 'dev', first_name: 'Dev' } };
     throw httpError('Open the app from Telegram', 401);
   }
   const params = new URLSearchParams(initData);
@@ -82,7 +84,7 @@ async function auth(request, env) {
   const authDate = parseInt(params.get('auth_date') || '0', 10);
   if (Date.now() / 1000 - authDate > 86400 * 7) throw httpError('Session expired, reopen the app', 401);
   const user = JSON.parse(params.get('user') || '{}');
-  return { id: String(user.id || 'unknown') };
+  return { id: String(user.id || 'unknown'), user };
 }
 
 async function rateLimit(env, uid) {
@@ -148,6 +150,7 @@ async function handleAI(request, env) {
   const user = await auth(request, env);
   const body = await request.json();
   await rateLimit(env, user.id);
+  await bumpUsage(env, 'ai_' + String(body.mode || '').slice(0, 20));
   const lang = LANG_NAMES[body.lang] || 'Ukrainian';
   const level = LEVEL_NAMES[body.level] || 'A2 Pre-Intermediate';
   const track = TRACKS[body.track] || TRACKS.general;
@@ -219,6 +222,7 @@ function fixAlternation(msgs) { // зливає підряд однакові р
 async function handleSTT(request, env) {
   const user = await auth(request, env);
   await rateLimit(env, user.id);
+  await bumpUsage(env, 'stt');
   if (!env.AI) throw httpError('Workers AI binding "AI" is not configured', 500);
   const buf = await request.arrayBuffer();
   if (buf.byteLength > 8 * 1024 * 1024) throw httpError('Audio too long', 413);
@@ -240,6 +244,106 @@ async function handleTTS(request, env) {
   if (typeof b64 !== 'string') return new Response(res, { headers: { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'public, max-age=604800' } });
   const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
   return new Response(bin, { headers: { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'public, max-age=604800' } });
+}
+
+// ---------------- Статистика (D1) ----------------
+let schemaReady = false;
+async function ensureSchema(env) {
+  if (schemaReady || !env.DB) return;
+  await env.DB.batch([
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, first_name TEXT, username TEXT, tg_lang TEXT, lang TEXT, cefr TEXT, track TEXT, xp INTEGER DEFAULT 0, lessons INTEGER DEFAULT 0, words INTEGER DEFAULT 0, streak INTEGER DEFAULT 0, donated INTEGER DEFAULT 0, opens INTEGER DEFAULT 0, first_seen INTEGER, last_seen INTEGER)'),
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS activity (user_id TEXT, day TEXT, PRIMARY KEY (user_id, day))'),
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS donations (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, name TEXT, username TEXT, amount INTEGER, charge_id TEXT, ts INTEGER)'),
+    env.DB.prepare('CREATE TABLE IF NOT EXISTS usage (day TEXT, kind TEXT, n INTEGER DEFAULT 0, PRIMARY KEY (day, kind))')
+  ]);
+  schemaReady = true;
+}
+const dayStr = (ms) => new Date(ms === undefined ? Date.now() : ms).toISOString().slice(0, 10);
+async function bumpUsage(env, kind) {
+  if (!env.DB) return;
+  try {
+    await ensureSchema(env);
+    await env.DB.prepare('INSERT INTO usage (day, kind, n) VALUES (?1, ?2, 1) ON CONFLICT(day, kind) DO UPDATE SET n = n + 1').bind(dayStr(), kind).run();
+  } catch (e) { console.error('usage', e.message); }
+}
+async function recordDonation(env, f, p) {
+  if (!env.DB) return;
+  try {
+    await ensureSchema(env);
+    const name = [f.first_name, f.last_name].filter(Boolean).join(' ');
+    await env.DB.batch([
+      env.DB.prepare('INSERT INTO donations (user_id, name, username, amount, charge_id, ts) VALUES (?1, ?2, ?3, ?4, ?5, ?6)').bind(String(f.id), name, f.username || '', p.total_amount, p.telegram_payment_charge_id || '', Date.now()),
+      env.DB.prepare('UPDATE users SET donated = donated + ?2 WHERE id = ?1').bind(String(f.id), p.total_amount)
+    ]);
+  } catch (e) { console.error('donation', e.message); }
+}
+const isAdmin = (env, user) => !!env.ADMIN_ID && String(user.id) === String(env.ADMIN_ID);
+
+// Відкриття застосунку / завершення уроку: оновлюємо профіль і денну активність
+async function handlePing(request, env) {
+  const a = await auth(request, env);
+  const b = await request.json().catch(() => ({}));
+  if (env.DB) {
+    try {
+      await ensureSchema(env);
+      const u = a.user || {}, now = Date.now(), num = (x) => Math.max(0, Math.floor(Number(x) || 0));
+      await env.DB.batch([
+        env.DB.prepare(`INSERT INTO users (id, first_name, username, tg_lang, lang, cefr, track, xp, lessons, words, streak, opens, first_seen, last_seen)
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)
+          ON CONFLICT(id) DO UPDATE SET first_name = excluded.first_name, username = excluded.username, tg_lang = excluded.tg_lang, lang = excluded.lang,
+            cefr = excluded.cefr, track = excluded.track, xp = excluded.xp, lessons = excluded.lessons, words = excluded.words, streak = excluded.streak,
+            opens = users.opens + excluded.opens, last_seen = excluded.last_seen`)
+          .bind(a.id, clip(u.first_name, 64), clip(u.username, 64), clip(u.language_code, 8), clip(b.lang, 4), clip(b.cefr, 4), clip(b.track, 16),
+            num(b.xp), num(b.lessons), num(b.words), num(b.streak), b.open ? 1 : 0, now),
+        env.DB.prepare('INSERT OR IGNORE INTO activity (user_id, day) VALUES (?1, ?2)').bind(a.id, dayStr(now))
+      ]);
+    } catch (e) { console.error('ping', e.message); }
+  }
+  return json({ ok: true, admin: isAdmin(env, a) });
+}
+
+// Статистика: доступна лише ADMIN_ID
+async function handleAdminStats(request, env) {
+  const a = await auth(request, env);
+  if (!isAdmin(env, a)) throw httpError('Forbidden', 403);
+  if (!env.DB) throw httpError('D1 binding "DB" is not configured', 500);
+  await ensureSchema(env);
+  const DAY = 86400000, now = Date.now(), today = dayStr(now);
+  const d7 = dayStr(now - 6 * DAY), d14 = dayStr(now - 13 * DAY), d30 = dayStr(now - 29 * DAY);
+  const q = (sql, ...args) => env.DB.prepare(sql).bind(...args);
+  const r = await env.DB.batch([
+    q('SELECT COUNT(*) AS n FROM users'),
+    q('SELECT COUNT(*) AS n FROM users WHERE first_seen >= ?1', now - DAY),
+    q('SELECT COUNT(*) AS n FROM users WHERE first_seen >= ?1', now - 7 * DAY),
+    q('SELECT COUNT(*) AS n FROM users WHERE first_seen >= ?1', now - 30 * DAY),
+    q('SELECT COUNT(*) AS n FROM activity WHERE day = ?1', today),
+    q('SELECT COUNT(DISTINCT user_id) AS n FROM activity WHERE day >= ?1', d7),
+    q('SELECT COUNT(DISTINCT user_id) AS n FROM activity WHERE day >= ?1', d30),
+    q('SELECT day, COUNT(*) AS n FROM activity WHERE day >= ?1 GROUP BY day ORDER BY day', d14),
+    q("SELECT strftime('%Y-%m-%d', first_seen / 1000, 'unixepoch') AS day, COUNT(*) AS n FROM users WHERE first_seen >= ?1 GROUP BY day ORDER BY day", now - 14 * DAY),
+    q('SELECT COALESCE(SUM(lessons),0) AS lessons, COALESCE(SUM(words),0) AS words, COALESCE(ROUND(AVG(xp)),0) AS avg_xp, COALESCE(SUM(opens),0) AS opens FROM users'),
+    q("SELECT COALESCE(cefr,'?') AS k, COUNT(*) AS n FROM users GROUP BY k ORDER BY k"),
+    q("SELECT COALESCE(lang,'?') AS k, COUNT(*) AS n FROM users GROUP BY k ORDER BY n DESC"),
+    q("SELECT COALESCE(track,'?') AS k, COUNT(*) AS n FROM users GROUP BY k ORDER BY n DESC"),
+    q('SELECT COUNT(*) AS n, COALESCE(SUM(amount),0) AS sum, COUNT(DISTINCT user_id) AS donors FROM donations'),
+    q('SELECT COUNT(*) AS n, COALESCE(SUM(amount),0) AS sum FROM donations WHERE ts >= ?1', now - 30 * DAY),
+    q('SELECT name, username, amount, ts FROM donations ORDER BY ts DESC LIMIT 10'),
+    q('SELECT first_name, username, cefr, xp, lessons, streak, donated, last_seen FROM users ORDER BY xp DESC LIMIT 10'),
+    q('SELECT first_name, username, cefr, first_seen FROM users ORDER BY first_seen DESC LIMIT 10'),
+    q('SELECT kind, n FROM usage WHERE day = ?1 ORDER BY n DESC', today),
+    q('SELECT kind, SUM(n) AS n FROM usage WHERE day >= ?1 GROUP BY kind ORDER BY n DESC', d30)
+  ]);
+  const rows = (i) => r[i].results || [], one = (i) => rows(i)[0] || {};
+  return json({
+    users: { total: one(0).n, new1: one(1).n, new7: one(2).n, new30: one(3).n },
+    active: { dau: one(4).n, wau: one(5).n, mau: one(6).n, byDay: rows(7), newByDay: rows(8) },
+    learning: one(9),
+    split: { cefr: rows(10), lang: rows(11), track: rows(12) },
+    donations: { all: one(13), d30: one(14), recent: rows(15) },
+    topUsers: rows(16), newUsers: rows(17),
+    usage: { today: rows(18), d30: rows(19) },
+    generated: now
+  });
 }
 
 // ---------------- /api/donate (Telegram Stars) ----------------
@@ -278,6 +382,7 @@ async function handleWebhook(request, env) {
   const msg = update.message;
   if (msg && msg.successful_payment) {
     const p = msg.successful_payment, f = msg.from || {};
+    await recordDonation(env, f, p);
     const ruP = f.language_code === 'ru';
     await tgApi(env, 'sendMessage', { chat_id: msg.chat.id, text: ruP ? `💛 Спасибо за поддержку! Получено ${p.total_amount} ⭐` : `💛 Дякую за підтримку! Отримано ${p.total_amount} ⭐` });
     if (env.ADMIN_ID) {
