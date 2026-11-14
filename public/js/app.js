@@ -16,9 +16,10 @@
     reg = {}; regN = 0;
     var html;
     if (!State.p.onboarded) html = Onboarding();
-    else if (nav.stack.length) { var pg = nav.stack[nav.stack.length - 1]; html = '<div class="page">' + Pages[pg.type](pg) + '</div>'; }
+    else if (nav.stack.length) { var pg = nav.stack[nav.stack.length - 1]; html = '<div class="page pg-' + pg.type + '">' + Pages[pg.type](pg) + '</div>'; }
     else html = '<div class="tabview">' + Tabs[nav.tab]() + '</div>' + NavBar();
     root.innerHTML = html;
+    root.className = State.p.onboarded && nav.stack.length ? 'in-page' : '';
     if (keepScroll) window.scrollTo(0, y);
     afterRender();
   }
@@ -27,7 +28,16 @@
     try { if (E.inTg && tg.isVersionAtLeast('6.1')) { hasBack ? tg.BackButton.show() : tg.BackButton.hide(); } } catch (e) { }
     var top = nav.stack[nav.stack.length - 1];
     if (top && top.type === 'chat' || top && top.type === 'qa') { var m = document.getElementById('msgs'); if (m) m.scrollTop = m.scrollHeight; window.scrollTo(0, document.body.scrollHeight); }
+    loadImages(); bindSwipe();
+    if (top && top.type === 'session' && !top.finished) {
+      var ci = top.items[top.i];
+      if (ci && ci.type === 'words' && ci.phase !== 'summary') {
+        var sk = top.i + '-' + (ci.wi || 0);
+        if (top._spoken !== sk) { top._spoken = sk; if (State.p.autoplay) Speech.speak(ci.words[ci.wi || 0].w); }
+      }
+    }
   }
+  var lastAnim = '';
   function push(pg) { nav.stack.push(pg); render(); window.scrollTo(0, 0); }
   function pop() { if (Rec.rec) Rec.stop(); nav.stack.pop(); render(); window.scrollTo(0, 0); }
   function replaceTop(pg) { nav.stack[nav.stack.length - 1] = pg; render(); window.scrollTo(0, 0); }
@@ -93,7 +103,7 @@
       '<div class="streak">🔥<b>' + (p.lastActive === U.today() || p.lastActive === U.yesterday() ? p.streak : 0) + '</b></div></div>';
     if (next) {
       h += '<div class="card cta" data-act="' + (next.exam ? 'exam' : 'lesson') + '" data-l="' + next.level + '" data-n="' + (next.n || 0) + '"><div class="muted small">' + t('continue') + '</div>' +
-        '<div class="cta-t">' + (next.exam ? '🏁 ' + t('exam') + ' ' + next.level : next.level + ' · ' + t('lesson') + ' ' + next.n + ' · ' + esc(lessonTitle(next.level, next.n))) + '</div><div class="arrow">›</div></div>';
+        '<div class="cta-t">' + (next.exam ? '🏁 ' + t('exam') + ' ' + next.level : next.level + ' · ' + t('lesson') + ' ' + next.n + ' · ' + esc(lessonTitle(next.level, next.n))) + '</div>' + resumeLine(next) + '<div class="arrow">›</div></div>';
     }
     h += '<h3>' + t('daily') + ' <span class="muted small">+' + Game.DAILY_XP + ' XP</span></h3><div class="card">' + p.daily.quests.map(questRow).join('') +
       '<div class="chest ' + (p.daily.bonus ? 'done' : '') + '">🎁 ' + t('daily_chest_hint', { n: Game.DAILY_BONUS }) + '</div></div>';
@@ -282,6 +292,7 @@
       '<h3>' + t('set_level') + '</h3><div class="grid3">' + window.LEVELS.map(function (l) { return '<button class="chip' + (p.cefr === l.id ? ' on' : '') + '" data-act="set-level" data-v="' + l.id + '"><b>' + l.id + '</b><small>' + l.name + '</small></button>'; }).join('') + '</div>' +
       '<h3>' + t('set_rate') + '</h3>' + seg('rate', [['0.7', '0.7×'], ['0.9', '0.9×'], ['1', '1×']], String(p.rate)) +
       '<h3>' + t('set_autoplay') + '</h3>' + seg('autoplay', [['1', t('on')], ['0', t('off')]], p.autoplay ? '1' : '0') +
+      '<h3>' + t('set_sound') + '</h3>' + seg('sound', [['1', t('on')], ['0', t('off')]], p.sound === false ? '0' : '1') +
       '<button class="btn danger big" data-act="reset">' + t('reset') + '</button>' +
       '<p class="muted small center">EnglishUp · ' + (E.inTg ? 'Telegram ' + tg.version : 'web') + '</p>';
   };
@@ -307,6 +318,11 @@
     return head(pg.level + ' · ' + t('lesson') + ' ' + pg.n) + spinner(t('gen_lesson'));
   };
   async function startLesson(level, n) {
+    var rs = State.p.resume;
+    if (rs && rs.key === lessonKey(level, n) && rs.items && hasProgress(rs)) {
+      var restored = restoreSession(rs, level, n);
+      if (restored) { push(restored); UI.toast('▶ ' + t('resumed', { n: restored.i + 1, m: restored.items.length })); return; }
+    }
     var pg = { type: 'lesson', level: level, n: n };
     push(pg);
     try {
@@ -325,18 +341,56 @@
       sents.slice(4, 6).forEach(function (s, i) { items.push({ type: 'tr', s: s, dir: i ? 'from_en' : 'to_en' }); });
       var idi = window.lessonIdioms ? window.lessonIdioms(level, n) : [];
       if (idi.length) items.push({ type: 'idioms', list: idi }); // ідіоми в кінці уроку
-      replaceTop(newSession(title, items, function (score) {
-        var key = lessonKey(level, n), rec = State.p.lessons[key] || {};
-        var pass = score >= 0.6;
-        rec.best = Math.max(rec.best || 0, score);
-        if (pass) { var first = !rec.done; rec.done = true; State.p.lessons[key] = rec; Game.track('lesson', 1); Game.addXP(first ? 30 + Math.round(40 * score) : 15); }
-        else { State.p.lessons[key] = rec; Game.addXP(5); }
-        State.save();
-        return pass ? t('lesson_pass') : t('lesson_fail');
-      }));
+      var vid = window.lessonVideo ? window.lessonVideo(level, n) : null;
+      if (vid) items.push({ type: 'video', v: vid }); // коротке відео в самому кінці
+      var sess = newSession(title, items, lessonFinish(level, n));
+      sess.key = lessonKey(level, n);
+      replaceTop(sess); saveResume(sess);
     } catch (e) {
       if (top() === pg) { pg.error = (e.code ? t('ai_fail') + ' (' + e.message + ')' : e.message || t('ai_fail')); rerender(); }
     }
+  }
+  function lessonFinish(level, n) {
+    return function (score) {
+      var key = lessonKey(level, n), rec = State.p.lessons[key] || {};
+      var pass = score >= 0.6;
+      rec.best = Math.max(rec.best || 0, score);
+      if (pass) { var first = !rec.done; rec.done = true; State.p.lessons[key] = rec; Game.track('lesson', 1); Game.addXP(first ? 30 + Math.round(40 * score) : 15); }
+      else { State.p.lessons[key] = rec; Game.addXP(5); }
+      if (State.p.resume && State.p.resume.key === key) State.p.resume = null;
+      State.save();
+      return pass ? t('lesson_pass') : t('lesson_fail');
+    };
+  }
+  // ----- Збереження місця зупинки в уроці -----
+  function serItem(it) {
+    if (it.type === 'gap' || it.type === 'tr') return { type: it.type, sid: it.s.id, dir: it.dir };
+    if (it.type === 'words') return { type: 'words', words: it.words, title: it.title, wi: it.wi || 0, phase: it.phase || '' };
+    var o = { type: it.type };
+    ['id', 'w', 'options', 'list', 'v'].forEach(function (k) { if (it[k] !== undefined) o[k] = it[k]; });
+    return o;
+  }
+  function deItem(o) {
+    if (o.type === 'gap' || o.type === 'tr') { var s = window.SENTENCES[o.sid]; return s ? { type: o.type, s: s, dir: o.dir } : null; }
+    return JSON.parse(JSON.stringify(o));
+  }
+  function saveResume(pg) {
+    if (!pg || !pg.key || pg.finished) return;
+    State.p.resume = { key: pg.key, i: pg.i, correct: pg.correct, graded: pg.graded, items: pg.items.map(serItem) };
+    State.save();
+  }
+  function restoreSession(rs, level, n) {
+    var items = rs.items.map(deItem);
+    if (items.some(function (x) { return !x; })) return null;
+    var s = newSession(level + ' · ' + t('lesson') + ' ' + n, items, lessonFinish(level, n));
+    s.key = rs.key; s.i = Math.min(rs.i, items.length - 1); s.correct = rs.correct || 0; s.graded = rs.graded || 0;
+    return s;
+  }
+  function hasProgress(rs) { return rs.i > 0 || !!(rs.items && rs.items[rs.i] && rs.items[rs.i].wi > 0); }
+  function resumeLine(next) {
+    var rs = State.p.resume;
+    if (!rs || next.exam || rs.key !== lessonKey(next.level, next.n) || !hasProgress(rs)) return '';
+    return '<div class="muted small">▶ ' + t('resume_step', { n: rs.i + 1, m: rs.items.length }) + '</div>';
   }
   function quizItem(w, pool) {
     var others = U.pick(pool.filter(function (x) { return x.w !== w.w; }), 3);
@@ -374,27 +428,50 @@
   Pages.session = function (pg) {
     if (pg.finished) {
       var sc = pg.graded ? pg.correct / pg.graded : 1;
-      return head(pg.title) + '<div class="card center result"><div class="ti big">' + (sc >= pg.passMark ? '🎉' : '💪') + '</div><h2>' + Math.round(sc * 100) + '%</h2><p>' + t('correct_of', { a: pg.correct, b: pg.graded }) + '</p><p>' + esc(pg.msg || '') + '</p></div>' +
-        '<button class="btn big" data-act="back">' + t('done') + '</button>';
+      lastAnim = '';
+      return head(pg.title) + '<div class="stage"><div class="card center result anim"><div class="ti big">' + (sc >= pg.passMark ? '🎉' : '💪') + '</div><h2>' + Math.round(sc * 100) + '%</h2><p>' + t('correct_of', { a: pg.correct, b: pg.graded }) + '</p><p>' + esc(pg.msg || '') + '</p></div></div>' +
+        '<div class="foot"><button class="btn big" data-act="back">' + t('done') + '</button></div>';
     }
-    var it = pg.items[pg.i], h = head(pg.title) + '<div class="prog">' + bar(pg.i, pg.items.length) + '<span class="muted small">' + (pg.i + 1) + '/' + pg.items.length + '</span></div>';
-    h += '<div class="ex">' + Items[it.type](it) + '</div>';
+    var it = pg.items[pg.i], nextL = pg.i + 1 < pg.items.length ? t('next') : t('finish');
+    var ak = pg.i + ':' + (it.wi || 0) + (it.phase || ''), anim = ak !== lastAnim ? ' anim' : ''; lastAnim = ak;
+    var h = head(pg.title) + '<div class="prog">' + bar(pg.i, pg.items.length) + '<span class="muted small">' + (pg.i + 1) + '/' + pg.items.length + '</span></div>';
+    h += '<div class="stage"><div class="ex ex-' + it.type + anim + '">' + Items[it.type](it) + '</div>';
     if (it.fb) h += '<div class="fb ' + (it.ok === true ? 'good' : it.ok === false ? 'bad' : '') + '">' + it.fb + '</div>';
+    h += '</div><div class="foot">';
     if (it.selfCheck) h += '<div class="row2"><button class="btn sec" data-act="self" data-v="0">✗ ' + t('self_wrong') + '</button><button class="btn sec" data-act="self" data-v="1">✓ ' + t('self_right') + '</button></div>';
-    else if (it.busy) h += spinner(t('checking'));
+    else if (it.busy) h += '<div class="center"><div class="spin"></div></div>';
+    else if (it.type === 'words' && it.phase !== 'summary') {
+      var cw = it.words[it.wi || 0], cid = R(cw), inD = Dict.has(cw.w), last = (it.wi || 0) + 1 >= it.words.length;
+      h += '<div class="row2"><button class="btn sec" data-act="dict-add" data-r="' + cid + '">' + (inD ? '✓ ' + t('in_dict') : '+ ' + t('save_word')) + '</button><button class="btn" data-act="wnext">' + (last ? t('to_list') : t('next_word')) + ' →</button></div>';
+    }
     else if (it.done && it.ok === false) {
       var saveObj = mistakeEntry(it), saved = saveObj && Dict.has(saveObj.w);
       if (saveObj) h += '<button class="btn sec big" data-act="save-mistake" ' + (saved ? 'disabled' : '') + '>' + (saved ? '✓ ' + t('in_dict') : '+ ' + t(saveObj.kind === 's' ? 'save_sentence' : 'save_word')) + '</button>';
-      h += '<div class="row2"><button class="btn sec" data-act="retry">↻ ' + t('try_again') + '</button><button class="btn" data-act="next">' + (pg.i + 1 < pg.items.length ? t('next') : t('finish')) + '</button></div>';
+      h += '<div class="row2"><button class="btn sec" data-act="retry">↻ ' + t('try_again') + '</button><button class="btn" data-act="next">' + nextL + '</button></div>';
     }
-    else if (it.type === 'words' || it.type === 'rule' || it.type === 'idioms' || it.done) h += '<button class="btn big" data-act="next">' + (pg.i + 1 < pg.items.length ? t('next') : t('finish')) + '</button>';
+    else if (it.type === 'words' || it.type === 'rule' || it.type === 'idioms' || it.type === 'video' || it.done) h += '<button class="btn big" data-act="next">' + nextL + '</button>';
     else if (it.type !== 'quiz') h += '<button class="btn big" data-act="check">' + t('check') + '</button>';
-    return h;
+    return h + '</div>';
   };
   var Items = {};
   Items.words = function (it) {
-    return '<h3>' + t('new_words') + (it.title ? ' · ' + esc(it.title) : '') + '</h3><p class="muted small">' + t('new_words_hint') + '</p><div class="card">' + it.words.map(function (w) { return wordRow(w); }).join('') + '</div>' +
-      '<button class="btn sec" data-act="add-all">' + t('add_all') + '</button>';
+    if (it.phase === 'summary') {
+      return '<div class="muted small">📋 ' + t('words_summary') + ' (' + it.words.length + ')</div><div class="wsum">' + it.words.map(function (w) {
+        var id = R(w), inD = Dict.has(w.w);
+        return '<div class="wrow"><button class="icon speak sm" data-act="speak" data-r="' + id + '">🔊</button><b>' + esc(w.w) + '</b><span class="muted">' + esc(wordTr(w)) + '</span><button class="icon sm ' + (inD ? 'on' : '') + '" data-act="dict-add" data-r="' + id + '">' + (inD ? '✓' : '+') + '</button></div>';
+      }).join('') + '</div><button class="btn sec" data-act="add-all">' + t('add_all') + '</button>';
+    }
+    var i = it.wi || 0, w = it.words[i], id = R(w);
+    return '<div class="muted small">' + t('new_words') + (it.title ? ' · ' + esc(it.title) : '') + ' · ' + (i + 1) + '/' + it.words.length + '</div>' +
+      '<div class="wcard" data-swipe="1"><div class="wimg"><span class="wph">' + esc(w.w.charAt(0).toUpperCase()) + '</span><img data-word="' + esc(w.w) + '" alt=""></div>' +
+      '<div class="wbody2"><div class="wline"><b class="wbig">' + esc(w.w) + '</b><button class="icon speak" data-act="speak" data-r="' + id + '">🔊</button></div>' +
+      (w.ipa ? '<div class="ipa">[' + esc(w.ipa) + ']</div>' : '') + '<div class="wtr">' + esc(wordTr(w)) + '</div></div><div class="wcredit" data-credit="1"></div></div>' +
+      '<div class="dots">' + it.words.map(function (x, k) { return '<i class="' + (k === i ? 'on' : '') + '"></i>'; }).join('') + '</div>';
+  };
+  Items.video = function (it) {
+    var id = it.v[0];
+    return '<div class="muted small">🎬 ' + t('video_title') + '</div><div class="vid"><iframe src="https://www.youtube-nocookie.com/embed/' + esc(id) + '?playsinline=1&rel=0&modestbranding=1&cc_load_policy=1&cc_lang_pref=en&hl=en&iv_load_policy=3&fs=0" title="' + esc(it.v[1]) + '" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe></div>' +
+      '<div><b>' + esc(it.v[1]) + '</b><div class="muted small">BBC Learning English</div></div><div class="card small muted">' + t('video_hint') + '</div>';
   };
   Items.idioms = function (it) {
     return '<h3>💬 ' + t('idioms_title') + '</h3><p class="muted small">' + t('idioms_hint') + '</p>' + it.list.map(function (x) {
@@ -455,7 +532,7 @@
   function grade(pg, it, ok, fb) {
     if (it.retry) { it.done = true; it.ok = ok; it.fb = fb + (ok ? '' : ''); UI.haptic(ok ? 'success' : 'error'); return; }
     it.done = true; it.ok = ok; it.fb = fb; pg.graded++; if (ok) pg.correct++;
-    UI.haptic(ok ? 'success' : 'error');
+    UI.haptic(ok ? 'success' : 'error'); Fx.sound(ok ? 'ok' : 'bad');
     var ev = { gap: 'gap', tr: 'translate', verb: 'verbs' }[it.type];
     if (ev) Game.track(ev, 1);
     if (ev && ok) Game.addXP(it.type === 'tr' ? 10 : 5);
@@ -498,12 +575,14 @@
     }
   }
   function nextItem() {
-    var pg = top();
-    if (pg.i + 1 < pg.items.length) { pg.i++; render(); window.scrollTo(0, 0); var f = root.querySelector('.gap-in, #tr-in'); if (f) f.focus(); return; }
+    var pg = top(), cur = pg.items[pg.i];
+    if (cur && cur.type === 'video' && !cur.watched) { cur.watched = true; Game.addXP(5); }
+    if (pg.i + 1 < pg.items.length) { pg.i++; saveResume(pg); render(); window.scrollTo(0, 0); var f = root.querySelector('.gap-in, #tr-in'); if (f) f.focus(); return; }
     pg.finished = true;
     var sc = pg.graded ? pg.correct / pg.graded : 1;
     pg.msg = pg.onFinish ? pg.onFinish(sc) : '';
     UI.haptic(sc >= pg.passMark ? 'success' : 'warning');
+    if (sc >= pg.passMark) { Fx.confetti(); Fx.sound('win'); }
     render(); window.scrollTo(0, 0);
   }
 
@@ -637,6 +716,7 @@
     else if (d.k === 'dir') p.dir = d.v;
     else if (d.k === 'rate') p.rate = parseFloat(d.v);
     else if (d.k === 'autoplay') p.autoplay = d.v === '1';
+    else if (d.k === 'sound') p.sound = d.v === '1';
     State.save(); rerender();
   };
   A['onb-level'] = function (d) { State.p.cefr = d.v; rerender(); };
@@ -744,6 +824,18 @@
   };
   A['donate-pick'] = function (d) { var pg = top(); pg.amount = +d.v; pg.custom = false; UI.haptic('light'); rerender(); };
   A['donate-go'] = function () { donate(top()); };
+  A.wnext = function () {
+    var pg = top(), it = pg && pg.items && pg.items[pg.i];
+    if (!it || it.type !== 'words' || it.phase === 'summary') return;
+    it.wi = (it.wi || 0) + 1;
+    if (it.wi >= it.words.length) { it.wi = it.words.length - 1; it.phase = 'summary'; }
+    UI.haptic('light'); saveResume(pg); render();
+  };
+  A.wprev = function () {
+    var pg = top(), it = pg && pg.items && pg.items[pg.i];
+    if (!it || it.type !== 'words' || it.phase === 'summary' || !(it.wi > 0)) return;
+    it.wi--; UI.haptic('light'); render();
+  };
   A.next = nextItem;
   A.check = checkItem;
   A.pick = function (d) {
@@ -836,17 +928,100 @@
     }
   });
 
+  // ---------- Картинки до слів (Openverse, безкоштовно, кеш у localStorage) ----------
+  var Img = {
+    mem: {}, pending: {},
+    get: function (word) {
+      var k = String(word).toLowerCase();
+      if (Img.mem[k] !== undefined) return Promise.resolve(Img.mem[k]);
+      try { var c = localStorage.getItem('img2_' + k); if (c) { Img.mem[k] = JSON.parse(c); return Promise.resolve(Img.mem[k]); } } catch (e) { }
+      if (Img.pending[k]) return Img.pending[k];
+      var q = k.replace(/[^a-z\s-]/g, ' ').trim();
+      Img.pending[k] = fetch('https://api.openverse.org/v1/images/?q=' + encodeURIComponent(q) + '&page_size=5&mature=false')
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (j) {
+          if (!j) { delete Img.pending[k]; return null; }
+          var r0 = (j.results || []).find(function (x) { return x.thumbnail; });
+          var v = r0 ? { u: r0.thumbnail, c: (r0.creator || 'Openverse') + ' · CC ' + String(r0.license || '').toUpperCase() } : null;
+          Img.mem[k] = v; try { localStorage.setItem('img2_' + k, JSON.stringify(v)); } catch (e) { }
+          return v;
+        }).catch(function () { delete Img.pending[k]; return null; });
+      return Img.pending[k];
+    }
+  };
+  function loadImages() {
+    root.querySelectorAll('img[data-word]').forEach(function (img) {
+      Img.get(img.getAttribute('data-word')).then(function (v) {
+        if (!v || !img.isConnected) return;
+        img.onload = function () { img.classList.add('ok'); };
+        img.onerror = function () { img.remove(); };
+        img.src = v.u;
+        var c = root.querySelector('[data-credit]'); if (c) c.textContent = '📷 ' + v.c;
+      });
+    });
+    var tp = top();
+    if (tp && tp.type === 'session' && !tp.finished) {
+      var ci = tp.items[tp.i];
+      if (ci && ci.type === 'words') [1, 2].forEach(function (d) { var nw = ci.words[(ci.wi || 0) + d]; if (nw) Img.get(nw.w); });
+    }
+  }
+  function bindSwipe() {
+    var el = root.querySelector('[data-swipe]'); if (!el) return;
+    var sx = null;
+    el.addEventListener('touchstart', function (e) { sx = e.touches[0].clientX; }, { passive: true });
+    el.addEventListener('touchend', function (e) {
+      if (sx === null) return; var dx = e.changedTouches[0].clientX - sx; sx = null;
+      if (dx < -50) A.wnext(); else if (dx > 50) A.wprev();
+    });
+  }
+  // ---------- Ефекти: звук і конфеті ----------
+  var Fx = {
+    ctx: null,
+    sound: function (kind) {
+      if (State.p.sound === false) return;
+      try {
+        var C = window.AudioContext || window.webkitAudioContext; if (!C) return;
+        Fx.ctx = Fx.ctx || new C(); var ctx = Fx.ctx, now = ctx.currentTime;
+        var notes = kind === 'ok' ? [660, 880] : kind === 'bad' ? [300, 220] : [523, 659, 784, 1046];
+        notes.forEach(function (f, i) {
+          var o = ctx.createOscillator(), g = ctx.createGain(), t0 = now + i * 0.09;
+          o.type = 'sine'; o.frequency.value = f;
+          g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.12, t0 + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.18);
+          o.connect(g); g.connect(ctx.destination); o.start(t0); o.stop(t0 + 0.2);
+        });
+      } catch (e) { }
+    },
+    confetti: function () {
+      var c = document.createElement('canvas'); c.className = 'confetti'; document.body.appendChild(c);
+      var W = c.width = window.innerWidth, H = c.height = window.innerHeight, x = c.getContext('2d');
+      var cols = ['#3b82f6', '#8b5cf6', '#f5a524', '#22a55b', '#e5484d', '#fde047'], ps = [];
+      for (var i = 0; i < 120; i++) ps.push({ x: W / 2, y: H * 0.35, vx: (Math.random() - 0.5) * 12, vy: Math.random() * -12 - 4, s: 5 + Math.random() * 5, c: cols[i % cols.length], r: Math.random() * 6 });
+      var t0 = performance.now();
+      (function frame(t) {
+        x.clearRect(0, 0, W, H);
+        ps.forEach(function (p) { p.vy += 0.35; p.x += p.vx; p.y += p.vy; p.r += 0.2; x.save(); x.translate(p.x, p.y); x.rotate(p.r); x.fillStyle = p.c; x.fillRect(-p.s / 2, -p.s / 2, p.s, p.s * 0.6); x.restore(); });
+        if (t - t0 < 1800) requestAnimationFrame(frame); else c.remove();
+      })(t0);
+    }
+  };
+  function setVh() {
+    var h = (E.inTg && tg.viewportStableHeight) || window.innerHeight;
+    document.documentElement.style.setProperty('--vh', h + 'px');
+  }
+
   // ---------- старт ----------
   async function boot() {
     if (tg) {
       try {
         tg.ready(); tg.expand();
+        tg.onEvent('viewportChanged', setVh);
         if (tg.isVersionAtLeast('7.7')) tg.disableVerticalSwipes();
         if (tg.isVersionAtLeast('6.1')) tg.BackButton.onClick(pop);
         if (tg.colorScheme === 'dark') document.documentElement.classList.add('dark');
         tg.onEvent('themeChanged', function () { document.documentElement.classList.toggle('dark', tg.colorScheme === 'dark'); });
       } catch (e) { }
     }
+    setVh(); window.addEventListener('resize', setVh);
     root.innerHTML = spinner('EnglishUp');
     await State.load();
     if (!State.p.onboarded && E.inTg) {
