@@ -1,0 +1,30 @@
+name = "english-up"
+main = "worker/index.js"
+compatibility_date = "2025-09-01"
+
+# Статика Mini App
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+# Workers AI: розпізнавання голосу (Whisper) і озвучка (MeloTTS)
+[ai]
+binding = "AI"
+
+[vars]
+MODEL = "claude-haiku-4-5"
+# Після першого деплою встав сюди URL воркера (з / в кінці) і задеплой ще раз
+APP_URL = "https://english-up.YOUR-SUBDOMAIN.workers.dev/"
+DAILY_AI_LIMIT = "150"
+DEV_MODE = "0"
+
+# Опційно: денний ліміт запитів до ІІ на користувача.
+# 1) npx wrangler kv namespace create LIMITS   2) розкоментуй і встав id
+# [[kv_namespaces]]
+# binding = "LIMITS"
+# id = "PASTE_ID_HERE"
+
+# Secrets (не в цьому файлі!):
+#   npx wrangler secret put ANTHROPIC_API_KEY
+#   npx wrangler secret put BOT_TOKEN
+#   npx wrangler secret put WEBHOOK_SECRET

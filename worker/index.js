@@ -1,0 +1,250 @@
+/**
+ * EnglishUp — Cloudflare Worker
+ *  - роздає статику Mini App (папка public через [assets])
+ *  - POST /api/ai   — Claude API (розмова, граматика, перевірка перекладу/есе, генерація слів)
+ *  - POST /api/stt  — розпізнавання голосу (Workers AI Whisper)
+ *  - POST /api/tts  — озвучка, коли в WebView немає speechSynthesis (Workers AI MeloTTS)
+ *  - POST /webhook  — бот: /start з кнопкою відкриття Mini App
+ *  - GET  /setup?key=WEBHOOK_SECRET — реєструє webhook і кнопку меню
+ *
+ * Secrets: ANTHROPIC_API_KEY, BOT_TOKEN, WEBHOOK_SECRET
+ * Vars:    MODEL, APP_URL, DAILY_AI_LIMIT, DEV_MODE
+ * Bindings: AI (Workers AI), LIMITS (KV, опційно — для денного ліміту)
+ */
+
+const LEVEL_NAMES = { A1: 'A1 Beginner', A2: 'A2 Pre-Intermediate', B1: 'B1 Intermediate', B2: 'B2 Upper-Intermediate', C1: 'C1 Advanced', C2: 'C2 Proficiency' };
+const LANG_NAMES = { uk: 'Ukrainian', ru: 'Russian' };
+const TRACKS = { general: 'general everyday English', it: 'IT / software development', travel: 'travel', business: 'business and office' };
+const SCENARIOS = {
+  job: 'The user tells you about their job. Ask friendly follow-up questions about their role, tasks, team, a typical day, what they like and what is hard.',
+  interview: 'You are an HR interviewer at an international company. Run a realistic job interview: one question at a time (experience, strengths, a difficult situation, motivation, salary expectations).',
+  standup: 'You are a team lead running a daily stand-up. Ask what the user did yesterday, what they plan today and whether they have blockers. Then discuss details.',
+  airport: 'You are an airline check-in agent, then a passport control officer. Role-play realistic airport situations.',
+  restaurant: 'You are a waiter in a restaurant. Greet the user, take the order, answer questions about the menu, bring the bill.',
+  smalltalk: 'You are a friendly colleague at a coffee break. Make small talk: weekend, weather, hobbies, plans.',
+  free: 'Free conversation. Ask the user what they want to talk about and keep the conversation going with interesting questions.'
+};
+
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    try {
+      if (request.method === 'OPTIONS') return cors(new Response(null, { status: 204 }));
+      if (url.pathname === '/api/ai' && request.method === 'POST') return cors(await handleAI(request, env));
+      if (url.pathname === '/api/stt' && request.method === 'POST') return cors(await handleSTT(request, env));
+      if (url.pathname === '/api/tts' && request.method === 'POST') return cors(await handleTTS(request, env));
+      if (url.pathname === '/webhook' && request.method === 'POST') return await handleWebhook(request, env);
+      if (url.pathname === '/setup') return await handleSetup(url, env);
+      if (url.pathname === '/health') return json({ ok: true });
+      if (env.ASSETS) return env.ASSETS.fetch(request);
+      return new Response('Not found', { status: 404 });
+    } catch (e) {
+      console.error(e);
+      return cors(json({ error: e.message || 'Server error' }, e.status || 500));
+    }
+  }
+};
+
+// ---------------- helpers ----------------
+function json(obj, status = 200) {
+  return new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json; charset=utf-8' } });
+}
+function cors(res) {
+  const h = new Headers(res.headers);
+  h.set('Access-Control-Allow-Origin', '*');
+  h.set('Access-Control-Allow-Headers', 'Content-Type, X-Init-Data');
+  h.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  return new Response(res.body, { status: res.status, headers: h });
+}
+function httpError(msg, status) { const e = new Error(msg); e.status = status; return e; }
+const enc = new TextEncoder();
+async function hmac(key, data) {
+  const k = await crypto.subtle.importKey('raw', typeof key === 'string' ? enc.encode(key) : key, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return new Uint8Array(await crypto.subtle.sign('HMAC', k, enc.encode(data)));
+}
+const hex = (buf) => [...buf].map((b) => b.toString(16).padStart(2, '0')).join('');
+
+// Перевірка підпису Telegram initData (https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app)
+async function auth(request, env) {
+  const initData = request.headers.get('X-Init-Data') || '';
+  if (!initData) {
+    if (env.DEV_MODE === '1') return { id: 'dev' };
+    throw httpError('Open the app from Telegram', 401);
+  }
+  const params = new URLSearchParams(initData);
+  const hash = params.get('hash');
+  params.delete('hash');
+  const dcs = [...params.entries()].map(([k, v]) => `${k}=${v}`).sort().join('\n');
+  const secret = await hmac('WebAppData', env.BOT_TOKEN);
+  const check = hex(await hmac(secret, dcs));
+  if (check !== hash) throw httpError('Bad signature', 401);
+  const authDate = parseInt(params.get('auth_date') || '0', 10);
+  if (Date.now() / 1000 - authDate > 86400 * 7) throw httpError('Session expired, reopen the app', 401);
+  const user = JSON.parse(params.get('user') || '{}');
+  return { id: String(user.id || 'unknown') };
+}
+
+async function rateLimit(env, uid) {
+  if (!env.LIMITS) return;
+  const limit = parseInt(env.DAILY_AI_LIMIT || '150', 10);
+  const key = `rl:${uid}:${new Date().toISOString().slice(0, 10)}`;
+  const n = parseInt((await env.LIMITS.get(key)) || '0', 10);
+  if (n >= limit) throw httpError('Daily AI limit reached. Try again tomorrow.', 429);
+  await env.LIMITS.put(key, String(n + 1), { expirationTtl: 90000 });
+}
+
+async function claude(env, system, messages, maxTokens = 900) {
+  if (!env.ANTHROPIC_API_KEY) throw httpError('ANTHROPIC_API_KEY is not set', 500);
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({ model: env.MODEL || 'claude-haiku-4-5', max_tokens: maxTokens, system, messages })
+  });
+  const j = await r.json();
+  if (!r.ok) throw httpError('Claude API: ' + ((j.error && j.error.message) || r.status), 502);
+  return (j.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('').trim();
+}
+function parseJSON(text) {
+  const s = text.replace(/```(?:json)?/g, '');
+  const a = s.indexOf('{'), b = s.lastIndexOf('}');
+  const a2 = s.indexOf('['), b2 = s.lastIndexOf(']');
+  let chunk = a >= 0 && (a2 < 0 || a < a2) ? s.slice(a, b + 1) : s.slice(a2, b2 + 1);
+  try { return JSON.parse(chunk); } catch (e) { throw httpError('AI returned invalid JSON', 502); }
+}
+const clip = (s, n) => String(s || '').slice(0, n);
+function cleanHistory(h, maxItems = 20) {
+  const out = (Array.isArray(h) ? h : []).slice(-maxItems)
+    .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && m.content)
+    .map((m) => ({ role: m.role, content: clip(m.content, 1500) }));
+  // Claude вимагає, щоб перше повідомлення було від user
+  if (out.length && out[0].role !== 'user') out.unshift({ role: 'user', content: '(Start the conversation.)' });
+  return fixAlternation(out);
+}
+
+// ---------------- /api/ai ----------------
+async function handleAI(request, env) {
+  const user = await auth(request, env);
+  const body = await request.json();
+  await rateLimit(env, user.id);
+  const lang = LANG_NAMES[body.lang] || 'Ukrainian';
+  const level = LEVEL_NAMES[body.level] || 'A2 Pre-Intermediate';
+  const track = TRACKS[body.track] || TRACKS.general;
+
+  switch (body.mode) {
+    case 'chat': {
+      const scen = SCENARIOS[body.scenario] || SCENARIOS.free;
+      const system = `You are a friendly English conversation partner in a language-learning app. Student level: ${level}. Student's native language: ${lang}. Learning focus: ${track}.
+Scenario: ${scen}
+Rules:
+- Speak only English in "reply". Match the student's level: short sentences and simple words for A1-A2, richer language for B2+.
+- Keep "reply" to 1-3 sentences and usually end with ONE question to keep the dialog going.
+- If the student's last message has grammar/vocabulary mistakes, put the corrected version in "better" and a very short explanation in ${lang} in "correction". If it's correct or there is no student message yet, set "better" and "correction" to "".
+- "tr" = translation of your reply into ${lang}.
+Return ONLY JSON: {"reply":"...","tr":"...","better":"...","correction":"..."}`;
+      let messages = cleanHistory(body.history);
+      if (!messages.length) messages = [{ role: 'user', content: '(Start the conversation. Greet me and ask the first question.)' }];
+      return json(parseJSON(await claude(env, system, messages, 600)));
+    }
+    case 'grammar_qa': {
+      const system = `You are an experienced English grammar teacher. Answer the student's question in ${lang}. Student level: ${level}.
+Be short and clear: a rule in 1-3 sentences, a formula if relevant, 2-4 English examples with ${lang} translation, and a typical mistake. Use simple markdown (**bold**, lists). If the question is not about English, politely bring it back to English learning.`;
+      const messages = cleanHistory(body.history, 6);
+      messages.push({ role: 'user', content: clip(body.question, 1000) });
+      return json({ answer: await claude(env, system, fixAlternation(messages), 900) });
+    }
+    case 'check_translation': {
+      const dirText = body.direction === 'to_en' ? `from ${lang} into English` : `from English into ${lang}`;
+      const system = `You check a language learner's translation ${dirText}. Level: ${level}. Accept any natural, grammatically correct translation that keeps the meaning, even if it differs from the reference. Ignore punctuation and capitalization.
+Return ONLY JSON: {"correct":true|false,"score":0-100,"corrected":"best corrected version of the student's translation in the target language","explanation":"1-2 short sentences in ${lang}: what is wrong or why it's good"}`;
+      const msg = `Source: ${clip(body.source, 500)}\nReference: ${clip(body.reference, 500)}\nStudent: ${clip(body.answer, 500)}`;
+      return json(parseJSON(await claude(env, system, [{ role: 'user', content: msg }], 400)));
+    }
+    case 'check_essay': {
+      const system = `You are an English teacher checking a student's essay. Expected level: ${level}. Write explanations in ${lang}.
+Return ONLY JSON:
+{"score":0-100,"level":"estimated CEFR level like B1","summary":"2-3 sentences in ${lang}: overall impression, structure, vocabulary, relevance to the topic","mistakes":[{"orig":"wrong fragment","fix":"corrected fragment","why":"short reason in ${lang}"}],"corrected":"the full corrected essay in English","tips":["2-4 short tips in ${lang}"]}
+List up to 12 most important mistakes.`;
+      const msg = `Topic: ${clip(body.topic, 200)}\n\nEssay:\n${clip(body.text, 6000)}`;
+      return json(parseJSON(await claude(env, system, [{ role: 'user', content: msg }], 2500)));
+    }
+    case 'lesson_words': {
+      const count = Math.min(15, Math.max(10, parseInt(body.count, 10) || 12));
+      const exclude = (Array.isArray(body.exclude) ? body.exclude : []).slice(-250).map((w) => clip(w, 40)).join(', ');
+      const system = `You create vocabulary lessons for an English learning app.
+Return ONLY JSON: {"title":"short English topic name","words":[{"w":"English word or short phrase","ipa":"British IPA without slashes","uk":"Ukrainian translation","ru":"Russian translation"}]}`;
+      const msg = `Create lesson #${parseInt(body.lesson, 10) || 1} for level ${level}, focus: ${track}. Pick one coherent topic suitable for this lesson number (later lessons = more advanced topics). Give exactly ${count} useful words/phrases of this level.
+Do NOT use these words: ${exclude || '-'}`;
+      return json(parseJSON(await claude(env, system, [{ role: 'user', content: msg }], 1500)));
+    }
+    case 'word_info': {
+      const system = `You are an English-Ukrainian-Russian dictionary. Return ONLY JSON: {"w":"the English word/phrase (fix spelling if needed)","ipa":"British IPA without slashes","uk":"1-3 main Ukrainian translations","ru":"1-3 main Russian translations"}. If the input is in Ukrainian or Russian, translate it to English and fill "w" with the English word.`;
+      return json(parseJSON(await claude(env, system, [{ role: 'user', content: clip(body.word, 80) }], 200)));
+    }
+    default:
+      throw httpError('Unknown mode', 400);
+  }
+}
+function fixAlternation(msgs) { // зливає підряд однакові ролі
+  const out = [];
+  for (const m of msgs) {
+    if (out.length && out[out.length - 1].role === m.role) out[out.length - 1].content += '\n' + m.content;
+    else out.push({ ...m });
+  }
+  return out;
+}
+
+// ---------------- /api/stt ----------------
+async function handleSTT(request, env) {
+  const user = await auth(request, env);
+  await rateLimit(env, user.id);
+  if (!env.AI) throw httpError('Workers AI binding "AI" is not configured', 500);
+  const buf = await request.arrayBuffer();
+  if (buf.byteLength > 8 * 1024 * 1024) throw httpError('Audio too long', 413);
+  const res = await env.AI.run('@cf/openai/whisper', { audio: [...new Uint8Array(buf)] });
+  return json({ text: (res && res.text) || '' });
+}
+
+// ---------------- /api/tts ----------------
+async function handleTTS(request, env) {
+  await auth(request, env);
+  if (!env.AI) throw httpError('Workers AI binding "AI" is not configured', 500);
+  const { text } = await request.json();
+  const res = await env.AI.run('@cf/myshell-ai/melotts', { prompt: clip(text, 400), lang: 'en' });
+  const b64 = res && (res.audio || res);
+  if (typeof b64 !== 'string') return new Response(res, { headers: { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'public, max-age=604800' } });
+  const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  return new Response(bin, { headers: { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'public, max-age=604800' } });
+}
+
+// ---------------- Telegram bot ----------------
+async function tgApi(env, method, payload) {
+  const r = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/${method}`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload)
+  });
+  return r.json();
+}
+async function handleWebhook(request, env) {
+  if (env.WEBHOOK_SECRET && request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== env.WEBHOOK_SECRET) return new Response('forbidden', { status: 403 });
+  const update = await request.json();
+  const msg = update.message;
+  if (msg && msg.text && msg.text.startsWith('/start')) {
+    const ru = (msg.from && msg.from.language_code) === 'ru';
+    await tgApi(env, 'sendMessage', {
+      chat_id: msg.chat.id,
+      text: ru
+        ? '👋 Привет! Это EnglishUp — уроки, грамматика, словарь, карточки и разговор с ИИ.\nНажми кнопку, чтобы начать.'
+        : '👋 Привіт! Це EnglishUp — уроки, граматика, словник, картки і розмова з ІІ.\nНатисни кнопку, щоб почати.',
+      reply_markup: { inline_keyboard: [[{ text: ru ? '🚀 Открыть EnglishUp' : '🚀 Відкрити EnglishUp', web_app: { url: env.APP_URL } }]] }
+    });
+  }
+  return new Response('ok');
+}
+async function handleSetup(url, env) {
+  if (!env.WEBHOOK_SECRET || url.searchParams.get('key') !== env.WEBHOOK_SECRET) return new Response('forbidden', { status: 403 });
+  const base = `${url.protocol}//${url.host}`;
+  const appUrl = env.APP_URL || base + '/';
+  const a = await tgApi(env, 'setWebhook', { url: base + '/webhook', secret_token: env.WEBHOOK_SECRET, allowed_updates: ['message'] });
+  const b = await tgApi(env, 'setChatMenuButton', { menu_button: { type: 'web_app', text: 'EnglishUp', web_app: { url: appUrl } } });
+  const c = await tgApi(env, 'setMyCommands', { commands: [{ command: 'start', description: 'Open EnglishUp' }] });
+  return json({ webhook: a, menu: b, commands: c, appUrl });
+}

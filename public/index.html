@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>EnglishUp</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app"></div>
+  <div id="toasts"></div>
+  <script>
+    // Якщо фронтенд хоститься окремо від Worker (напр. GitHub Pages), вкажи URL воркера:
+    // window.API_BASE = 'https://english-up.<your-subdomain>.workers.dev';
+    window.API_BASE = window.API_BASE || '';
+  </script>
+  <script src="data/tenses.js"></script>
+  <script src="data/sentences.js"></script>
+  <script src="data/verbs.js"></script>
+  <script src="data/words.js"></script>
+  <script src="js/i18n.js"></script>
+  <script src="js/core.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
