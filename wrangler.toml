@@ -14,7 +14,7 @@ binding = "AI"
 [vars]
 MODEL = "claude-haiku-4-5"
 # Після першого деплою встав сюди URL воркера (з / в кінці) і задеплой ще раз
-APP_URL = "https://english-up.YOUR-SUBDOMAIN.workers.dev/"
+APP_URL = "https://english-up.lyashenko462.workers.dev/"
 DAILY_AI_LIMIT = "150"
 DEV_MODE = "0"
 
