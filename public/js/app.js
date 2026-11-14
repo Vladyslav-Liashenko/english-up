@@ -245,8 +245,58 @@
       return '<div class="a' + (p.ach[a.id] ? ' on' : '') + '"><span>' + a.icon + '</span><small>' + esc(t('ach_' + a.id)) + '</small></div>';
     }).join('') + '</div>';
     if (p.essays.length) h += '<h3>' + t('essays_hist') + '</h3><div class="card">' + p.essays.slice(0, 10).map(function (e) { return '<div class="lrow static"><span class="ln">' + e.score + '</span><span class="lt">' + esc(e.topic) + '</span><span class="muted small">' + e.date + '</span></div>'; }).join('') + '</div>';
+    if (E.isAdmin) h += '<button class="btn big admin-btn" data-act="open" data-v="admin">📊 ' + t('adm_title') + '</button>';
     h += '<button class="btn big" data-act="open" data-v="donate">⭐ ' + t('donate') + '</button>';
     h += '<button class="btn sec big" data-act="open" data-v="settings">⚙️ ' + t('settings') + '</button>';
+    return h;
+  };
+
+  // ----- Статистика для адміна -----
+  function ping(open) {
+    if (!E.inTg) return;
+    var p = State.p;
+    fetch((window.API_BASE || '') + '/api/ping', { method: 'POST', headers: Api.headers(), body: JSON.stringify({ open: open, lang: p.lang, cefr: p.cefr, track: p.track, xp: p.xp, lessons: p.stats.lessons, words: p.stats.words, streak: p.streak }) })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { if (j && j.admin && !E.isAdmin) { E.isAdmin = true; var tp = top(); if (tp && tp.type === 'profile') rerender(); } })
+      .catch(function () { });
+  }
+  async function loadAdmin(pg) {
+    try {
+      var r = await fetch((window.API_BASE || '') + '/api/admin/stats', { method: 'POST', headers: Api.headers(), body: '{}' });
+      var j = await r.json();
+      if (!r.ok) throw new Error(j.error || r.status);
+      pg.data = j;
+    } catch (e) { pg.err = e.message; }
+    if (top() === pg) rerender();
+  }
+  function fmtDate(ms) { var d = new Date(ms); return U.pad(d.getDate()) + '.' + U.pad(d.getMonth() + 1) + ' ' + U.pad(d.getHours()) + ':' + U.pad(d.getMinutes()); }
+  function who(u) { return esc((u.first_name || u.name || '—') + (u.username ? ' @' + u.username : '')); }
+  function splitRows(list, total) {
+    return list.map(function (x) { return '<div class="srow"><span>' + esc(x.k) + '</span>' + bar(x.n, total || 1) + '<b>' + x.n + '</b></div>'; }).join('') || '<div class="muted small">—</div>';
+  }
+  function dayChart(list) {
+    var map = {}; list.forEach(function (x) { map[x.day] = x.n; });
+    var days = [], max = 1;
+    for (var i = 13; i >= 0; i--) { var d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10); days.push([d, map[d] || 0]); max = Math.max(max, map[d] || 0); }
+    return '<div class="chart">' + days.map(function (x) { return '<div class="col"><i style="height:' + Math.round(x[1] / max * 100) + '%"></i><span>' + x[1] + '</span><small>' + x[0].slice(8) + '</small></div>'; }).join('') + '</div>';
+  }
+  Pages.admin = function (pg) {
+    var h = head(t('adm_title'), t('adm_sub'));
+    if (pg.err) return h + '<div class="empty">⚠️<p>' + esc(pg.err) + '</p><button class="btn" data-act="admin-reload">' + t('retry') + '</button></div>';
+    if (!pg.data) return h + spinner(t('loading'));
+    var d = pg.data, tot = d.users.total || 0;
+    function m(v, l) { return '<div class="stat"><b>' + (v || 0) + '</b><small>' + l + '</small></div>'; }
+    h += '<div class="stats">' + m(tot, t('adm_users')) + m(d.users.new1, t('adm_new1')) + m(d.users.new7, t('adm_new7')) + m(d.users.new30, t('adm_new30')) + '</div>';
+    h += '<h3>' + t('adm_active') + '</h3><div class="stats">' + m(d.active.dau, 'DAU') + m(d.active.wau, 'WAU') + m(d.active.mau, 'MAU') + m(d.learning.opens, t('adm_opens')) + '</div>';
+    h += '<div class="card"><div class="muted small">' + t('adm_by_day') + '</div>' + dayChart(d.active.byDay) + '<div class="muted small">' + t('adm_new_by_day') + '</div>' + dayChart(d.active.newByDay) + '</div>';
+    h += '<h3>⭐ ' + t('adm_donations') + '</h3><div class="stats">' + m(d.donations.all.sum, t('adm_stars_all')) + m(d.donations.all.n, t('adm_payments')) + m(d.donations.all.donors, t('adm_donors')) + m(d.donations.d30.sum, t('adm_stars_30')) + '</div>';
+    h += '<div class="card">' + (d.donations.recent.length ? d.donations.recent.map(function (x) { return '<div class="lrow static"><span class="ln">⭐</span><span class="lt">' + who(x) + '<div class="muted small">' + fmtDate(x.ts) + '</div></span><b>' + x.amount + '</b></div>'; }).join('') : '<div class="muted small">' + t('adm_no_don') + '</div>') + '</div>';
+    h += '<h3>🎓 ' + t('adm_learning') + '</h3><div class="stats">' + m(d.learning.lessons, t('st_lessons')) + m(d.learning.words, t('st_words')) + m(d.learning.avg_xp, t('adm_avg_xp')) + m(tot, t('adm_users')) + '</div>';
+    h += '<div class="card"><div class="muted small">CEFR</div>' + splitRows(d.split.cefr, tot) + '<div class="muted small" style="margin-top:8px">' + t('adm_lang') + '</div>' + splitRows(d.split.lang, tot) + '<div class="muted small" style="margin-top:8px">' + t('adm_track') + '</div>' + splitRows(d.split.track, tot) + '</div>';
+    h += '<h3>🏆 ' + t('adm_top') + '</h3><div class="card">' + d.topUsers.map(function (u, i) { return '<div class="lrow static"><span class="ln">' + (i + 1) + '</span><span class="lt">' + who(u) + '<div class="muted small">' + esc(u.cefr || '') + ' · ' + u.lessons + ' ' + t('st_lessons') + ' · 🔥' + u.streak + (u.donated ? ' · ⭐' + u.donated : '') + '</div></span><b>' + u.xp + '</b></div>'; }).join('') + '</div>';
+    h += '<h3>🆕 ' + t('adm_newest') + '</h3><div class="card">' + d.newUsers.map(function (u) { return '<div class="lrow static"><span class="lt">' + who(u) + '</span><span class="muted small">' + esc(u.cefr || '') + ' · ' + fmtDate(u.first_seen) + '</span></div>'; }).join('') + '</div>';
+    h += '<h3>🤖 ' + t('adm_usage') + '</h3><div class="card">' + (d.usage.d30.length ? d.usage.d30.map(function (x) { var td = (d.usage.today.find(function (y) { return y.kind === x.kind; }) || {}).n || 0; return '<div class="srow"><span>' + esc(x.kind) + '</span><span class="muted small">' + t('adm_today') + ': ' + td + '</span><b>' + x.n + '</b></div>'; }).join('') : '<div class="muted small">—</div>') + '</div>';
+    h += '<button class="btn sec big" data-act="admin-reload">↻ ' + t('adm_reload') + '</button><p class="muted small center">' + t('adm_updated') + ' ' + fmtDate(d.generated) + '</p>';
     return h;
   };
 
@@ -358,6 +408,7 @@
       if (pass) { var first = !rec.done; rec.done = true; State.p.lessons[key] = rec; Game.track('lesson', 1); Game.addXP(first ? 30 + Math.round(40 * score) : 15); }
       else { State.p.lessons[key] = rec; Game.addXP(5); }
       if (State.p.resume && State.p.resume.key === key) State.p.resume = null;
+      ping(false);
       State.save();
       return pass ? t('lesson_pass') : t('lesson_fail');
     };
@@ -733,6 +784,7 @@
     await E.Store.wipe(); location.reload();
   };
   A.open = function (d) {
+    if (d.v === 'admin') { var ap = { type: 'admin' }; push(ap); loadAdmin(ap); return; }
     if (d.v === 'essay') push({ type: 'essay', step: 'topics' });
     else if (d.v === 'qa') push({ type: 'qa', msgs: [] });
     else push({ type: d.v });
@@ -837,6 +889,7 @@
     if (!it || it.type !== 'words' || it.phase === 'summary' || !(it.wi > 0)) return;
     it.wi--; UI.haptic('light'); render();
   };
+  A['admin-reload'] = function () { var ap = top(); ap.data = null; ap.err = null; rerender(); loadAdmin(ap); };
   A.next = nextItem;
   A.check = checkItem;
   A.pick = function (d) {
@@ -1076,6 +1129,7 @@
       if (lc === 'ru') State.p.lang = 'ru';
     }
     render();
+    ping(true);
   }
   boot();
 })();
