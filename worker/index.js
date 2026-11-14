@@ -33,6 +33,7 @@ export default {
       if (url.pathname === '/api/ai' && request.method === 'POST') return cors(await handleAI(request, env));
       if (url.pathname === '/api/stt' && request.method === 'POST') return cors(await handleSTT(request, env));
       if (url.pathname === '/api/tts' && request.method === 'POST') return cors(await handleTTS(request, env));
+      if (url.pathname === '/api/donate' && request.method === 'POST') return cors(await handleDonate(request, env));
       if (url.pathname === '/webhook' && request.method === 'POST') return await handleWebhook(request, env);
       if (url.pathname === '/setup') return await handleSetup(url, env);
       if (url.pathname === '/health') return json({ ok: true });
@@ -237,6 +238,24 @@ async function handleTTS(request, env) {
   return new Response(bin, { headers: { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'public, max-age=604800' } });
 }
 
+// ---------------- /api/donate (Telegram Stars) ----------------
+async function handleDonate(request, env) {
+  const user = await auth(request, env);
+  const body = await request.json();
+  const n = Math.floor(Number(body.amount));
+  if (!(n >= 1 && n <= 10000)) throw httpError('Amount must be 1-10000 Stars', 400);
+  const ru = body.lang === 'ru';
+  const r = await tgApi(env, 'createInvoiceLink', {
+    title: ru ? 'Поддержать EnglishUp' : 'Підтримати EnglishUp',
+    description: ru ? `Благодарность автору: ${n} ⭐. Спасибо, что помогаешь развивать приложение!` : `Подяка автору: ${n} ⭐. Дякую, що допомагаєш розвивати застосунок!`,
+    payload: `donate:${user.id}:${n}:${Date.now()}`,
+    currency: 'XTR',
+    prices: [{ label: ru ? 'Донат' : 'Донат', amount: n }]
+  });
+  if (!r.ok) throw httpError('Telegram: ' + (r.description || 'invoice error'), 502);
+  return json({ link: r.result });
+}
+
 // ---------------- Telegram bot ----------------
 async function tgApi(env, method, payload) {
   const r = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/${method}`, {
@@ -247,7 +266,28 @@ async function tgApi(env, method, payload) {
 async function handleWebhook(request, env) {
   if (env.WEBHOOK_SECRET && request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== env.WEBHOOK_SECRET) return new Response('forbidden', { status: 403 });
   const update = await request.json();
+  // Оплата Stars: Telegram чекає підтвердження протягом 10 секунд
+  if (update.pre_checkout_query) {
+    await tgApi(env, 'answerPreCheckoutQuery', { pre_checkout_query_id: update.pre_checkout_query.id, ok: true });
+    return new Response('ok');
+  }
   const msg = update.message;
+  if (msg && msg.successful_payment) {
+    const p = msg.successful_payment, f = msg.from || {};
+    const ruP = f.language_code === 'ru';
+    await tgApi(env, 'sendMessage', { chat_id: msg.chat.id, text: ruP ? `💛 Спасибо за поддержку! Получено ${p.total_amount} ⭐` : `💛 Дякую за підтримку! Отримано ${p.total_amount} ⭐` });
+    if (env.ADMIN_ID) {
+      const who = [f.first_name, f.last_name].filter(Boolean).join(' ') + (f.username ? ` (@${f.username})` : '') + `, id ${f.id}`;
+      await tgApi(env, 'sendMessage', { chat_id: env.ADMIN_ID, text: `⭐ Донат ${p.total_amount} Stars від ${who}\ncharge: ${p.telegram_payment_charge_id}` });
+    }
+    return new Response('ok');
+  }
+  if (msg && msg.text && msg.text.startsWith('/paysupport')) {
+    const ruS = (msg.from && msg.from.language_code) === 'ru';
+    await tgApi(env, 'sendMessage', { chat_id: msg.chat.id, text: ruS ? 'Донаты добровольные. Если возникла проблема с оплатой, опиши её ответным сообщением, автор свяжется с тобой.' : 'Донати добровільні. Якщо виникла проблема з оплатою, опиши її у відповідь, автор зв\'яжеться з тобою.' });
+    if (env.ADMIN_ID) await tgApi(env, 'sendMessage', { chat_id: env.ADMIN_ID, text: `🆘 /paysupport від id ${msg.from && msg.from.id} (@${(msg.from && msg.from.username) || '-'})` });
+    return new Response('ok');
+  }
   if (msg && msg.text && msg.text.startsWith('/start')) {
     const ru = (msg.from && msg.from.language_code) === 'ru';
     await tgApi(env, 'sendMessage', {
@@ -264,8 +304,8 @@ async function handleSetup(url, env) {
   if (!env.WEBHOOK_SECRET || url.searchParams.get('key') !== env.WEBHOOK_SECRET) return new Response('forbidden', { status: 403 });
   const base = `${url.protocol}//${url.host}`;
   const appUrl = env.APP_URL || base + '/';
-  const a = await tgApi(env, 'setWebhook', { url: base + '/webhook', secret_token: env.WEBHOOK_SECRET, allowed_updates: ['message'] });
+  const a = await tgApi(env, 'setWebhook', { url: base + '/webhook', secret_token: env.WEBHOOK_SECRET, allowed_updates: ['message', 'pre_checkout_query'] });
   const b = await tgApi(env, 'setChatMenuButton', { menu_button: { type: 'web_app', text: 'EnglishUp', web_app: { url: appUrl } } });
-  const c = await tgApi(env, 'setMyCommands', { commands: [{ command: 'start', description: 'Open EnglishUp' }] });
+  const c = await tgApi(env, 'setMyCommands', { commands: [{ command: 'start', description: 'Open EnglishUp' }, { command: 'paysupport', description: 'Payment support' }] });
   return json({ webhook: a, menu: b, commands: c, appUrl });
 }
